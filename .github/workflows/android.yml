@@ -37,10 +37,12 @@ jobs:
       run: |
         export PATH=${{ env.ANDROID_NDK_BIN }}:$PATH
         
-        # 1. Build the preprocessor helper natively for the x86 host runner
-        # (so permute can execute on the runner to generate processed.bin)
-        make -C preprocess CXX=g++ ARCH_LEVEL=native
-        
+        # 1. Download the network and build the preprocessor helper cleanly using host g++
+        make download-net
+        make -C preprocess clean
+        # Build permute explicitly with standard host g++ and standard linker
+        g++ -O3 -std=c++20 preprocess/permute.cpp src/parameters.cpp -o preprocess/permute
+
         # 2. Compile the main engine targeting ARM64 using NDK Clang
         make native \
           CXX="${{ env.TOOLCHAIN_PREFIX }}clang++" \
