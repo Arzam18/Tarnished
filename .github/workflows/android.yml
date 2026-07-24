@@ -37,15 +37,18 @@ jobs:
       run: |
         export PATH=${{ env.ANDROID_NDK_BIN }}:$PATH
         
-        # 1. Download the network and build the preprocessor helper locally with host g++
+        # 1. Download network and build the preprocessor helper locally with host g++
         make download-net
         g++ -O3 -std=c++20 -I./src preprocess/permute.cpp src/parameters.cpp -o preprocess/permute
+        
+        # 2. Run the preprocessor manually to generate processed.bin
+        ./preprocess/permute $(cat network.txt).bin processed.bin
 
-        # 2. Compile the main engine targeting ARM64 using NDK Clang
+        # 3. Compile the main engine targeting ARM64 using NDK Clang (passing ARM arch flags and disabling static linking for NDK lld compatibility)
         make native \
           CXX="${{ env.TOOLCHAIN_PREFIX }}clang++" \
-          ARCH_LEVEL=v3 \
-          LDFLAGS="-fuse-ld=lld -static" \
+          ARCH="-march=armv8-a" \
+          LDFLAGS="-fuse-ld=lld" \
           EXE=tarnished-android-arm64
 
     - name: Bench
