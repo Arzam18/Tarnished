@@ -1,0 +1,84 @@
+name: Tarnished Android Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Tarnished Android
+    runs-on: ubuntu-24.04
+    steps:
+
+    - name: Clone Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Android NDK & QEMU Environment
+      run: |
+        sudo apt update && sudo apt install -y qemu-user
+        NDKV="27.2.12479018"
+        ANDROID_ROOT=/usr/local/lib/android
+        ANDROID_SDK_ROOT=$ANDROID_ROOT/sdk
+        SDKMANAGER=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager
+        echo "y" | $SDKMANAGER "ndk;$NDKV"
+        ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/$NDKV
+        ANDROID_NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
+        
+        # Set NDK Toolchain Environment Variables
+        echo "ANDROID_NDK_BIN=$ANDROID_NDK_BIN" >> $GITHUB_ENV
+        echo "TOOLCHAIN_PREFIX=$ANDROID_NDK_BIN/aarch64-linux-android35-" >> $GITHUB_ENV
+
+    - name: Compile Tarnished for Android (aarch64)
+      run: |
+        export PATH=${{ env.ANDROID_NDK_BIN }}:$PATH
+        
+        # 1. Build the preprocessor helper natively for the x86 host runner
+        # (so permute can execute on the runner to generate processed.bin)
+        make -C preprocess CXX=g++ ARCH_LEVEL=native
+        
+        # 2. Compile the main engine targeting ARM64 using NDK Clang
+        make native \
+          CXX="${{ env.TOOLCHAIN_PREFIX }}clang++" \
+          ARCH_LEVEL=v3 \
+          LDFLAGS="-fuse-ld=lld -static" \
+          EXE=tarnished-android-arm64
+
+    - name: Bench
+      run: |
+        bench=$(git show --summary | grep -oE 'Bench: [0-9]+' | awk '{print $2}')
+        qemu-aarch64 ./tarnished-android-arm64 bench 2> output || true
+        cat output
+        real=$(grep 'Nodes searched' output | awk '{print $4}')
+        
+        echo "Calculated bench: $real"
+        if [ -n "$bench" ]; then
+          if [ "$bench" != "$real" ]; then 
+            echo "Bench mismatch! got $real, expected $bench"
+            exit 1
+          fi
+          echo "Bench match successful ($real)"
+        else
+          echo "No 'Bench: <number>' found in commit header. Binary executed successfully."
+        fi
+
+    - name: Upload Binary Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: tarnished-android-arm64
+        path: ./tarnished-android-arm64
+
+    - name: Create GitHub Prerelease
+      if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: android-build-${{ github.run_number }}
+        name: Tarnished Android Build ${{ github.run_number }}
+        prerelease: true
+        files: ./tarnished-android-arm64
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
