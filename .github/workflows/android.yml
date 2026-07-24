@@ -44,12 +44,12 @@ jobs:
         # 2. Run the preprocessor manually to generate processed.bin
         ./preprocess/permute $(cat network.txt).bin processed.bin
 
-        # 3. Compile the main engine targeting ARM64 using NDK Clang (passing ARM arch flags and enabling experimental library features for std::jthread)
+        # 3. Compile the main engine targeting ARM64 using NDK Clang (adding -static-libstdc++ to bundle the C++ runtime inside the binary)
         make native \
           CXX="${{ env.TOOLCHAIN_PREFIX }}clang++" \
           ARCH="-march=armv8-a" \
           CXXFLAGS="-O3 -march=armv8-a -fno-finite-math-only -funroll-loops -flto -std=c++20 -DNDEBUG -pthread -DEVALFILE=\\\"processed.bin\\\" -fexperimental-library" \
-          LDFLAGS="-fuse-ld=lld" \
+          LDFLAGS="-fuse-ld=lld -static-libstdc++" \
           EXE=tarnished-android-arm64
 
     - name: Bench
