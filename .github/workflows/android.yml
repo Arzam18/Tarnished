@@ -41,6 +41,7 @@ jobs:
       run: |
         cat << 'EOF' > patch_simd.py
         import os
+        import re
 
         def patch_file(path):
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -48,10 +49,14 @@ jobs:
 
             original = content
 
-            # Replace immintrin.h with a conditional include wrapper
+            # Safely replace the entire #include <immintrin.h> directive
             if "<immintrin.h>" in content:
-                replacement = "#if defined(__aarch64__) || defined(__ARM_NEON)\n#include \"sse2neon.h\"\n#else\n#include <immintrin.h>\n#endif"
-                content = content.replace("<immintrin.h>", replacement)
+                replacement = """#if defined(__aarch64__) || defined(__ARM_NEON)
+        #include "sse2neon.h"
+        #else
+        #include <immintrin.h>
+        #endif"""
+                content = re.sub(r'#include\s*<immintrin\.h>', replacement, content)
 
             if content != original:
                 with open(path, "w", encoding="utf-8") as f:
