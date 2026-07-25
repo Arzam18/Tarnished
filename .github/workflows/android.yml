@@ -33,6 +33,36 @@ jobs:
         echo "ANDROID_NDK_BIN=$ANDROID_NDK_BIN" >> $GITHUB_ENV
         echo "TOOLCHAIN_PREFIX=$ANDROID_NDK_BIN/aarch64-linux-android35-" >> $GITHUB_ENV
 
+    - name: Download sse2neon Header
+      run: |
+        curl -sL https://raw.githubusercontent.com/DLTcollab/sse2neon/master/sse2neon.h -o sse2neon.h
+
+    - name: Patch SIMD Headers for ARM64
+      run: |
+        python3 -c '
+        import os
+
+        def patch_file(path):
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+
+            original = content
+
+            # Replace immintrin header with sse2neon
+            if "<immintrin.h>" in content:
+                content = content.replace("<immintrin.h>", "\"sse2neon.h\"")
+
+            if content != original:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print(f"Patched: {path}")
+
+        for root, dirs, files in os.walk("."):
+            for file in files:
+                if file.endswith((".h", ".hpp", ".cpp", ".c")):
+                    patch_file(os.path.join(root, file))
+        '
+
     - name: Compile Tarnished for Android (aarch64)
       run: |
         export PATH=${{ env.ANDROID_NDK_BIN }}:$PATH
@@ -44,7 +74,7 @@ jobs:
         # 2. Run the preprocessor manually to generate processed.bin
         ./preprocess/permute $(cat network.txt).bin processed.bin
 
-        # 3. Compile the main engine targeting ARM64 using NDK Clang with explicit libc++ for std::jthread support
+        # 3. Compile the main engine targeting ARM64 using NDK Clang with sse2neon support
         make native \
           CXX="${{ env.TOOLCHAIN_PREFIX }}clang++" \
           ARCH="-march=armv8-a" \
