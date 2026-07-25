@@ -85,7 +85,7 @@ jobs:
         make native \
           CXX="${{ env.TOOLCHAIN_PREFIX }}clang++" \
           ARCH="-march=armv8-a" \
-          CXXFLAGS="-O3 -march=armv8-a -funroll-loops -flto -std=c++20 -stdlib=libc++ -DNDEBUG -pthread -DEVALFILE=\\\"processed.bin\\\"" \
+          CXXFLAGS="-O3 -march=armv8-a -funroll-loops -flto -std=c++20 -stdlib=libc++ -fexperimental-library -DNDEBUG -pthread -DEVALFILE=\\\"processed.bin\\\"" \
           LDFLAGS="-fuse-ld=lld -static-libstdc++" \
           EXE=tarnished-android-arm64
 
