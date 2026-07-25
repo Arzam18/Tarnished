@@ -44,11 +44,11 @@ jobs:
         # 2. Run the preprocessor manually to generate processed.bin
         ./preprocess/permute $(cat network.txt).bin processed.bin
 
-        # 3. Compile the main engine targeting ARM64 using optimized flags and static libstdc++
+        # 3. Compile the main engine targeting ARM64 using NDK Clang with explicit libc++ for std::jthread support
         make native \
           CXX="${{ env.TOOLCHAIN_PREFIX }}clang++" \
           ARCH="-march=armv8-a" \
-          CXXFLAGS="-O3 -march=armv8-a -funroll-loops -flto -std=c++20 -DNDEBUG -pthread -DEVALFILE=\\\"processed.bin\\\"" \
+          CXXFLAGS="-O3 -march=armv8-a -funroll-loops -flto -std=c++20 -stdlib=libc++ -DNDEBUG -pthread -DEVALFILE=\\\"processed.bin\\\"" \
           LDFLAGS="-fuse-ld=lld -static-libstdc++" \
           EXE=tarnished-android-arm64
 
