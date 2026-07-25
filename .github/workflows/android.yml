@@ -37,7 +37,7 @@ jobs:
       run: |
         curl -sL https://raw.githubusercontent.com/DLTcollab/sse2neon/master/sse2neon.h -o sse2neon.h
 
-    - name: Patch SIMD Headers for ARM64
+    - name: Patch SIMD Headers for ARM64 Cross-Compilation
       run: |
         python3 -c '
         import os
@@ -48,9 +48,14 @@ jobs:
 
             original = content
 
-            # Replace immintrin header with sse2neon
+            # Use conditional include wrapper so host x86 uses immintrin.h and Android ARM64 uses sse2neon.h
             if "<immintrin.h>" in content:
-                content = content.replace("<immintrin.h>", "\"sse2neon.h\"")
+                replacement = """#if defined(__aarch64__) || defined(__ARM_NEON)
+#include "sse2neon.h"
+#else
+#include <immintrin.h>
+#endif"""
+                content = content.replace("<immintrin.h>", replacement)
 
             if content != original:
                 with open(path, "w", encoding="utf-8") as f:
@@ -67,14 +72,14 @@ jobs:
       run: |
         export PATH=${{ env.ANDROID_NDK_BIN }}:$PATH
         
-        # 1. Download network and build preprocessor helper with host g++ (adding -D__aarch64__ and dummy arm_neon check bypass if needed)
+        # 1. Download network and build preprocessor helper locally on host (x86)
         make download-net
         g++ -O3 -std=c++20 -I. -I./src preprocess/permute.cpp src/parameters.cpp -o preprocess/permute
         
         # 2. Run the preprocessor manually to generate processed.bin
         ./preprocess/permute $(cat network.txt).bin processed.bin
 
-        # 3. Compile the main engine targeting ARM64 using NDK Clang with sse2neon support
+        # 3. Compile main engine targeting Android ARM64 using NDK Clang with sse2neon
         make native \
           CXX="${{ env.TOOLCHAIN_PREFIX }}clang++" \
           ARCH="-march=armv8-a" \
