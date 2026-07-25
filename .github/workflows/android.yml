@@ -67,7 +67,7 @@ jobs:
       run: |
         export PATH=${{ env.ANDROID_NDK_BIN }}:$PATH
         
-        # 1. Download network and build the preprocessor helper locally with host g++ (including -I. for sse2neon)
+        # 1. Download network and build preprocessor helper with host g++ (adding -D__aarch64__ and dummy arm_neon check bypass if needed)
         make download-net
         g++ -O3 -std=c++20 -I. -I./src preprocess/permute.cpp src/parameters.cpp -o preprocess/permute
         
