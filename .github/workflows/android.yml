@@ -39,7 +39,7 @@ jobs:
 
     - name: Patch SIMD Headers for ARM64 Cross-Compilation
       run: |
-        python3 -c '
+        cat << 'EOF' > patch_simd.py
         import os
 
         def patch_file(path):
@@ -48,13 +48,9 @@ jobs:
 
             original = content
 
-            # Use conditional include wrapper so host x86 uses immintrin.h and Android ARM64 uses sse2neon.h
+            # Replace immintrin.h with a conditional include wrapper
             if "<immintrin.h>" in content:
-                replacement = """#if defined(__aarch64__) || defined(__ARM_NEON)
-#include "sse2neon.h"
-#else
-#include <immintrin.h>
-#endif"""
+                replacement = "#if defined(__aarch64__) || defined(__ARM_NEON)\n#include \"sse2neon.h\"\n#else\n#include <immintrin.h>\n#endif"
                 content = content.replace("<immintrin.h>", replacement)
 
             if content != original:
@@ -66,7 +62,8 @@ jobs:
             for file in files:
                 if file.endswith((".h", ".hpp", ".cpp", ".c")):
                     patch_file(os.path.join(root, file))
-        '
+        EOF
+        python3 patch_simd.py
 
     - name: Compile Tarnished for Android (aarch64)
       run: |
