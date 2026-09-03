@@ -19,10 +19,12 @@ ifeq ($(OS),Windows_NT)
 	EXE_SUFFIX := .exe
 endif
 
+SOURCES := permute.cpp ../src/parameters.cpp ../src/external/format.cpp
+
 all: permute$(EXE_SUFFIX)
 
-permute$(EXE_SUFFIX): permute.cpp
-	$(HOST_CXX) $(CXXFLAGS) $(PERMUTE_FLAGS) permute.cpp -o permute$(EXE_SUFFIX)
+permute$(EXE_SUFFIX): $(SOURCES)
+	$(HOST_CXX) $(CXXFLAGS) $(PERMUTE_FLAGS) $(SOURCES) -o permute$(EXE_SUFFIX)
 
 clean:
 	rm -f permute permute.exe
