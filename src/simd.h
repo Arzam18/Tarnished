@@ -171,10 +171,25 @@
     inline vepi16 max_epi16(vepi16 a, vepi16 b) { return vmaxq_s16(a, b); }
 
     inline vepi16 mullo_epi16(vepi16 a, vepi16 b) { return vmulq_s16(a, b); }
+    inline vepi16 mulhi_epi16(vepi16 a, vepi16 b) { return vmulhq_s16(a, b); }
+
+    inline vepi16 slli_epi16(vepi16 v, int imm) { return vshlq_s16(v, vdupq_n_s16(imm)); }
+
     inline vepi16 add_epi16(vepi16 a, vepi16 b) { return vaddq_s16(a, b); }
     inline vepi16 sub_epi16(vepi16 a, vepi16 b) { return vsubq_s16(a, b); }
 
+    inline vepi8 packus_epi16(vepi16 a, vepi16 b) {
+        return vreinterpretq_s8_u8(vcombine_u8(vqmovun_s16(a), vqmovun_s16(b)));
+    }
+
     inline vepi32 set1_epi32(int32_t v) { return vdupq_n_s32(v); }
+
+    inline vepi32 madd_epi16(vepi16 a, vepi16 b) {
+        int32x4_t p_lo = vmull_s16(vget_low_s16(a), vget_low_s16(b));
+        int32x4_t p_hi = vmull_s16(vget_high_s16(a), vget_high_s16(b));
+        return vpaddq_s32(p_lo, p_hi);
+    }
+
     inline vepi32 add_epi32(vepi32 a, vepi32 b) { return vaddq_s32(a, b); }
 
     inline int reduce_epi32(vepi32 v) { return vaddvq_s32(v); }
