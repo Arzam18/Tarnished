@@ -15,15 +15,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install cross-compilation toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang lld gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+      - name: Set up Android NDK
+        uses: nsetup/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26b
 
       - name: Build Engine Binary
         run: |
+          NDK_BIN="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          
           make arm64 \
-            CXX="clang++ --target=aarch64-linux-gnu -static" \
+            CXX="$NDK_BIN/aarch64-linux-android24-clang++ -static-libstdc++" \
             HOST_CXX="g++"
 
       - name: Upload Android Executable
