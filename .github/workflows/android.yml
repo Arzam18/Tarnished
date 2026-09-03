@@ -1,4 +1,4 @@
-name: Build Tarnished Android ARM64
+name: Build Tarnished for Android ARM64
 
 on:
   push:
@@ -16,11 +16,11 @@ jobs:
       - name: Install Toolchain and Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang lld curl
+          sudo apt-get install -y clang lld g++-aarch64-linux-gnu curl make
 
       - name: Build ARM64 Binary
         run: |
-          make arm64 CXX="clang++ --target=aarch64-linux-gnu"
+          make arm64 CXX="clang++ --target=aarch64-linux-gnu" HOST_CXX="g++"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
