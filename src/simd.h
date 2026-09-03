@@ -14,8 +14,8 @@
         using v128i  = __m128i;
 
         inline vepi16 set1_epi16(int16_t v){ return _mm512_set1_epi16(v); }
-        inline vepi16 load_epi16(const vepi16* p){ return _mm512_load_si512(p); }
-        inline void   store_epi16(vepi16* p, vepi16 v){ _mm512_store_si512(p,v); }
+        inline vepi16 load_epi16(const void* p){ return _mm512_load_si512((const __m512i*)p); }
+        inline void   store_epi16(void* p, vepi16 v){ _mm512_store_si512((__m512i*)p, v); }
 
         inline vepi16 min_epi16(vepi16 a, vepi16 b){ return _mm512_min_epi16(a,b); }
         inline vepi16 max_epi16(vepi16 a, vepi16 b){ return _mm512_max_epi16(a,b); }
@@ -40,8 +40,8 @@
 
         inline vps32 cvtepi32_ps(vepi32 v){ return _mm512_cvtepi32_ps(v); }
 
-        inline vps32 load_ps(const float* p){ return _mm512_load_ps(p); }
-        inline void  store_ps(float* p,vps32 v){ _mm512_store_ps(p,v); }
+        inline vps32 load_ps(const void* p){ return _mm512_load_ps((const float*)p); }
+        inline void  store_ps(void* p, vps32 v){ _mm512_store_ps((float*)p, v); }
 
         inline vps32 set1_ps(float v){ return _mm512_set1_ps(v); }
         inline vps32 zero_ps(){ return _mm512_setzero_ps(); }
@@ -78,8 +78,8 @@
         using v128i  = __m128i;
 
         inline vepi16 set1_epi16(int16_t v){ return _mm256_set1_epi16(v); }
-        inline vepi16 load_epi16(const vepi16* p){ return _mm256_load_si256(p); }
-        inline void   store_epi16(vepi16* p, vepi16 v){ _mm256_store_si256(p,v); }
+        inline vepi16 load_epi16(const void* p){ return _mm256_load_si256((const __m256i*)p); }
+        inline void   store_epi16(void* p, vepi16 v){ _mm256_store_si256((__m256i*)p, v); }
 
         inline vepi16 min_epi16(vepi16 a, vepi16 b){ return _mm256_min_epi16(a,b); }
         inline vepi16 max_epi16(vepi16 a, vepi16 b){ return _mm256_max_epi16(a,b); }
@@ -113,8 +113,8 @@
 
         inline vps32 cvtepi32_ps(vepi32 v){ return _mm256_cvtepi32_ps(v); }
 
-        inline vps32 load_ps(const float* p){ return _mm256_load_ps(p); }
-        inline void  store_ps(float* p,vps32 v){ _mm256_store_ps(p,v); }
+        inline vps32 load_ps(const void* p){ return _mm256_load_ps((const float*)p); }
+        inline void  store_ps(void* p, vps32 v){ _mm256_store_ps((float*)p, v); }
 
         inline vps32 set1_ps(float v){ return _mm256_set1_ps(v); }
         inline vps32 zero_ps(){ return _mm256_setzero_ps(); }
@@ -164,8 +164,8 @@
     using v128i  = int32x4_t;
 
     inline vepi16 set1_epi16(int16_t v) { return vdupq_n_s16(v); }
-    inline vepi16 load_epi16(const vepi16* p) { return vld1q_s16((const int16_t*)p); }
-    inline void   store_epi16(vepi16* p, vepi16 v) { vst1q_s16((int16_t*)p, v); }
+    inline vepi16 load_epi16(const void* p) { return vld1q_s16((const int16_t*)p); }
+    inline void   store_epi16(void* p, vepi16 v) { vst1q_s16((int16_t*)p, v); }
 
     inline vepi16 min_epi16(vepi16 a, vepi16 b) { return vminq_s16(a, b); }
     inline vepi16 max_epi16(vepi16 a, vepi16 b) { return vmaxq_s16(a, b); }
@@ -180,8 +180,8 @@
     inline int reduce_epi32(vepi32 v) { return vaddvq_s32(v); }
 
     inline vps32 cvtepi32_ps(vepi32 v) { return vcvtq_f32_s32(v); }
-    inline vps32 load_ps(const float* p) { return vld1q_f32(p); }
-    inline void  store_ps(float* p, vps32 v) { vst1q_f32(p, v); }
+    inline vps32 load_ps(const void* p) { return vld1q_f32((const float*)p); }
+    inline void  store_ps(void* p, vps32 v) { vst1q_f32((float*)p, v); }
 
     inline vps32 set1_ps(float v) { return vdupq_n_f32(v); }
     inline vps32 zero_ps() { return vdupq_n_f32(0.0f); }
