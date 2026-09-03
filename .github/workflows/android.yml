@@ -2,28 +2,32 @@ name: Build Tarnished for Android ARM64
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   build-arm64:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Toolchain and Dependencies
+      - name: Install cross-compilation toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang lld g++-aarch64-linux-gnu curl make
+          sudo apt-get install -y clang lld gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
 
-      - name: Build ARM64 Binary
+      - name: Build Engine Binary
         run: |
-          make arm64 CXX="clang++ --target=aarch64-linux-gnu" HOST_CXX="g++"
+          make arm64 \
+            CXX="clang++ --target=aarch64-linux-gnu -static" \
+            HOST_CXX="g++"
 
-      - name: Upload Artifact
+      - name: Upload Android Executable
         uses: actions/upload-artifact@v4
         with:
-          name: tarnished-arm64
+          name: tarnished-android-arm64
           path: tarnished
