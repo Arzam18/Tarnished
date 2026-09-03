@@ -1,17 +1,17 @@
-CXX ?= clang++
+HOST_CXX ?= g++
 CXXFLAGS := -O3 -std=c++20 -pthread -DNDEBUG
 
 ARCH_LEVEL ?= native
-ifeq ($(ARCH_LEVEL),native)
-	ARCH := -march=native
-else ifeq ($(ARCH_LEVEL),v3)
-	ARCH := -march=x86-64-v3 -static
+ifeq ($(ARCH_LEVEL),v3)
+	PERMUTE_FLAGS := -DUSE_AVX2
 else ifeq ($(ARCH_LEVEL),v4)
-	ARCH := -march=x86-64-v4 -static
+	PERMUTE_FLAGS := -DUSE_AVX512
 else ifeq ($(ARCH_LEVEL),arm64)
-	ARCH := -march=armv8-a+dotprod+crypto
+	PERMUTE_FLAGS := -DUSE_NEON
 else ifeq ($(ARCH_LEVEL),neon)
-	ARCH := -march=armv8-a
+	PERMUTE_FLAGS := -DUSE_NEON
+else
+	PERMUTE_FLAGS := -march=native
 endif
 
 EXE_SUFFIX =
@@ -22,7 +22,7 @@ endif
 all: permute$(EXE_SUFFIX)
 
 permute$(EXE_SUFFIX): permute.cpp
-	$(CXX) $(CXXFLAGS) $(ARCH) permute.cpp -o permute$(EXE_SUFFIX)
+	$(HOST_CXX) $(CXXFLAGS) $(PERMUTE_FLAGS) permute.cpp -o permute$(EXE_SUFFIX)
 
 clean:
 	rm -f permute permute.exe
