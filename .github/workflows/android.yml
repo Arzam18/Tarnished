@@ -15,15 +15,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Android NDK
-        uses: nsetup/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r26b
-
       - name: Build Engine Binary
         run: |
-          NDK_BIN="${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          NDK_BIN="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           
           make arm64 \
             CXX="$NDK_BIN/aarch64-linux-android24-clang++ -static-libstdc++" \
