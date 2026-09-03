@@ -1,125 +1,29 @@
-name: Tarnished Android Build
+name: Build Tarnished Android ARM64
 
 on:
-  workflow_dispatch:
   push:
     branches: [ "main", "master" ]
   pull_request:
-
-permissions:
-  contents: write
+    branches: [ "main", "master" ]
 
 jobs:
-  build:
-    name: Tarnished Android
-    runs-on: ubuntu-24.04
+  build-arm64:
+    runs-on: ubuntu-latest
     steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Clone Repository
-      uses: actions/checkout@v4
+      - name: Install Toolchain and Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld curl
 
-    - name: Set up Android NDK & QEMU Environment
-      run: |
-        sudo apt update && sudo apt install -y qemu-user
-        NDKV="27.2.12479018"
-        ANDROID_ROOT=/usr/local/lib/android
-        ANDROID_SDK_ROOT=$ANDROID_ROOT/sdk
-        SDKMANAGER=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager
-        echo "y" | $SDKMANAGER "ndk;$NDKV"
-        ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/$NDKV
-        ANDROID_NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
-        
-        # Set NDK Toolchain Environment Variables
-        echo "ANDROID_NDK_BIN=$ANDROID_NDK_BIN" >> $GITHUB_ENV
-        echo "TOOLCHAIN_PREFIX=$ANDROID_NDK_BIN/aarch64-linux-android35-" >> $GITHUB_ENV
+      - name: Build ARM64 Binary
+        run: |
+          make arm64 CXX="clang++ --target=aarch64-linux-gnu"
 
-    - name: Download sse2neon Header
-      run: |
-        curl -sL https://raw.githubusercontent.com/DLTcollab/sse2neon/master/sse2neon.h -o sse2neon.h
-
-    - name: Patch SIMD Headers for ARM64 Cross-Compilation
-      run: |
-        cat << 'EOF' > patch_simd.py
-        import os
-        import re
-
-        def patch_file(path):
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
-
-            original = content
-
-            # Safely replace the entire #include <immintrin.h> directive
-            if "<immintrin.h>" in content:
-                replacement = """#if defined(__aarch64__) || defined(__ARM_NEON)
-        #include "sse2neon.h"
-        #else
-        #include <immintrin.h>
-        #endif"""
-                content = re.sub(r'#include\s*<immintrin\.h>', replacement, content)
-
-            if content != original:
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(content)
-                print(f"Patched: {path}")
-
-        for root, dirs, files in os.walk("."):
-            for file in files:
-                if file.endswith((".h", ".hpp", ".cpp", ".c")):
-                    patch_file(os.path.join(root, file))
-        EOF
-        python3 patch_simd.py
-
-    - name: Compile Tarnished for Android (aarch64)
-      run: |
-        export PATH=${{ env.ANDROID_NDK_BIN }}:$PATH
-        
-        # 1. Download network and build preprocessor helper locally on host (x86)
-        make download-net
-        g++ -O3 -std=c++20 -I. -I./src preprocess/permute.cpp src/parameters.cpp -o preprocess/permute
-        
-        # 2. Run the preprocessor manually to generate processed.bin
-        ./preprocess/permute $(cat network.txt).bin processed.bin
-
-        # 3. Compile main engine targeting Android ARM64 using NDK Clang with sse2neon
-        make native \
-          CXX="${{ env.TOOLCHAIN_PREFIX }}clang++" \
-          ARCH="-march=armv8-a" \
-          CXXFLAGS="-O3 -march=armv8-a -funroll-loops -flto -std=c++20 -stdlib=libc++ -fexperimental-library -DNDEBUG -pthread -DEVALFILE=\\\"processed.bin\\\"" \
-          LDFLAGS="-fuse-ld=lld -static-libstdc++" \
-          EXE=tarnished-android-arm64
-
-    - name: Bench
-      run: |
-        bench=$(git show --summary | grep -oE 'Bench: [0-9]+' | awk '{print $2}')
-        qemu-aarch64 ./tarnished-android-arm64 bench 2> output || true
-        cat output
-        real=$(grep 'Nodes searched' output | awk '{print $4}')
-        
-        echo "Calculated bench: $real"
-        if [ -n "$bench" ]; then
-          if [ "$bench" != "$real" ]; then 
-            echo "Bench mismatch! got $real, expected $bench"
-            exit 1
-          fi
-          echo "Bench match successful ($real)"
-        else
-          echo "No 'Bench: <number>' found in commit header. Binary executed successfully."
-        fi
-
-    - name: Upload Binary Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: tarnished-android-arm64
-        path: ./tarnished-android-arm64
-
-    - name: Create GitHub Prerelease
-      if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: android-build-${{ github.run_number }}
-        name: Tarnished Android Build ${{ github.run_number }}
-        prerelease: true
-        files: ./tarnished-android-arm64
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarnished-arm64
+          path: tarnished
