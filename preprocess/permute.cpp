@@ -3,9 +3,6 @@
 #include <iostream>
 #include <string>
 
-// Stub for tuning parameter registration called by static initializers in included headers
-void addTunableParam(std::string name, int defaultVal, int minVal, int maxVal, int step) {}
-
 QuantisedNetwork quantisedNet;
 Network net;
 
