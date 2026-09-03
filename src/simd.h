@@ -171,7 +171,12 @@
     inline vepi16 max_epi16(vepi16 a, vepi16 b) { return vmaxq_s16(a, b); }
 
     inline vepi16 mullo_epi16(vepi16 a, vepi16 b) { return vmulq_s16(a, b); }
-    inline vepi16 mulhi_epi16(vepi16 a, vepi16 b) { return vmulhq_s16(a, b); }
+    
+    inline vepi16 mulhi_epi16(vepi16 a, vepi16 b) {
+        int32x4_t low  = vmull_s16(vget_low_s16(a), vget_low_s16(b));
+        int32x4_t high = vmull_s16(vget_high_s16(a), vget_high_s16(b));
+        return vcombine_s16(vshrn_n_s32(low, 16), vshrn_n_s32(high, 16));
+    }
 
     inline vepi16 slli_epi16(vepi16 v, int imm) { return vshlq_s16(v, vdupq_n_s16(imm)); }
 
