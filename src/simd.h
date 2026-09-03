@@ -230,8 +230,10 @@
     }
 
     inline float reduce_add_ps(const vps32 *vecs) {
-        float32x4_t sum = vaddq_f32(vecs[0], vecs[1]);
-        return vaddvq_f32(sum);
+        float32x4_t sum01 = vaddq_f32(vecs[0], vecs[1]);
+        float32x4_t sum23 = vaddq_f32(vecs[2], vecs[3]);
+        float32x4_t total = vaddq_f32(sum01, sum23);
+        return vaddvq_f32(total);
     }
 #else
     #define AUTOVEC
