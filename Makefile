@@ -13,8 +13,12 @@ else ifeq ($(ARCH_LEVEL),v3)
 	ARCH := -march=x86-64-v3 -static
 else ifeq ($(ARCH_LEVEL),v4)
 	ARCH := -march=x86-64-v4 -static
+else ifeq ($(ARCH_LEVEL),arm64)
+	ARCH := -march=armv8-a+dotprod+crypto
+else ifeq ($(ARCH_LEVEL),neon)
+	ARCH := -march=armv8-a
 else
-	$(error Invalid ARCH_LEVEL: $(ARCH_LEVEL). Use native, avx2 or avx512)
+	$(error Invalid ARCH_LEVEL: $(ARCH_LEVEL). Use native, v3, v4, arm64, or neon)
 endif
 
 ifeq ($(OS),Windows_NT)
@@ -43,9 +47,7 @@ $(EVALFILE):
 	@true
 endif
 
-
 CXXFLAGS := -O3 $(ARCH) -fno-finite-math-only -funroll-loops -flto -fuse-ld=lld -std=c++20 -DNDEBUG -pthread -DEVALFILE=\"$(EVALFILE_PROCESSED)\"
-
 
 ifdef NO_EVALFILE_SET
 $(EVALFILE):
@@ -59,7 +61,6 @@ endif
 ifndef EXE
 	EXE = tarnished$(EXE_SUFFIX)
 endif
-
 
 $(EVALFILE_PROCESSED):
 	$(MAKE) -C preprocess ARCH_LEVEL=$(ARCH_LEVEL)
@@ -79,3 +80,9 @@ avx2:
 
 avx512:
 	$(MAKE) ARCH_LEVEL=v4
+
+arm64:
+	$(MAKE) ARCH_LEVEL=arm64
+
+neon:
+	$(MAKE) ARCH_LEVEL=neon
