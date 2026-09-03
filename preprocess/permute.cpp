@@ -2,9 +2,12 @@
 #include <fstream>
 #include <iostream>
 
-// Taken from Alexandria
 QuantisedNetwork quantisedNet;
 Network net;
+
+struct alignas(16) Vector128 {
+    int16_t v[8];
+};
 
 void permute_transpose() {
     for (int i = 0; i < INPUT_BUCKETS * 768 * L1_SIZE; ++i)
@@ -13,23 +16,25 @@ void permute_transpose() {
     for (int i = 0; i < L1_SIZE; ++i)
         net.FTBiases[i] = quantisedNet.FTBiases[i];
 
-#ifndef AUTOVEC
-    __m128i *weight = reinterpret_cast<__m128i*>(net.FTWeights);
-    __m128i *biases = reinterpret_cast<__m128i*>(net.FTBiases);
-    constexpr int numChunks = sizeof(__m128i) / sizeof(int16_t);
-
-#if defined(USE_AVX512)
+#if defined(PERMUTE_AVX512)
     constexpr int numRegi = 8;
     constexpr int order[numRegi] = {0, 2, 4, 6, 1, 3, 5, 7};
-#elif defined(USE_AVX2)
+#elif defined(PERMUTE_AVX2)
     constexpr int numRegi = 4;
     constexpr int order[numRegi] = {0, 2, 1, 3};
-#elif defined(USE_NEON)
+#elif defined(PERMUTE_NEON)
     constexpr int numRegi = 1;
     constexpr int order[numRegi] = {0};
+#else
+    constexpr int numRegi = 0;
 #endif
 
-    __m128i regi[numRegi];
+#if numRegi > 0
+    Vector128 *weight = reinterpret_cast<Vector128*>(net.FTWeights);
+    Vector128 *biases = reinterpret_cast<Vector128*>(net.FTBiases);
+    constexpr int numChunks = sizeof(Vector128) / sizeof(int16_t);
+
+    Vector128 regi[numRegi];
 
     for (int i = 0; i < INPUT_BUCKETS * 768 * L1_SIZE / numChunks; i += numRegi) {
         for (int j = 0; j < numRegi; ++j)
@@ -49,7 +54,7 @@ void permute_transpose() {
 #endif
 
     for (int bucket = 0; bucket < OUTPUT_BUCKETS; ++bucket) {
-#if !defined(AUTOVEC) && !defined(USE_NEON)
+#if defined(PERMUTE_AVX512) || defined(PERMUTE_AVX2)
         for (int i = 0; i < L1_SIZE / L1_CHUNK_PER_32; ++i)
             for (int j = 0; j < L2_SIZE; ++j)
                 for (int k = 0; k < L1_CHUNK_PER_32; ++k)
