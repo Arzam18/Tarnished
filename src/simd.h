@@ -212,15 +212,16 @@
     inline vps32 max_ps(vps32 a, vps32 b) { return vmaxq_f32(a, b); }
 
     inline vepi32 dpbusd_epi32(const vepi32 sum, const vepi8 vec0, const vepi8 vec1) {
-#if defined(__ARM_FEATURE_DOTPROD)
-        return vdotq_s32(sum, vec0, vec1);
-#else
-        int16x8_t low = vmull_s8(vget_low_s8(vec0), vget_low_s8(vec1));
-        int16x8_t high = vmull_s8(vget_high_s8(vec0), vget_high_s8(vec1));
-        int32x4_t p1 = vpaddlq_s16(low);
-        int32x4_t p2 = vpaddlq_s16(high);
-        return vaddq_s32(sum, vaddq_s32(p1, p2));
-#endif
+        uint8x16_t u0 = vreinterpretq_u8_s8(vec0);
+        
+        int16x8_t low  = vmulq_s16(vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(u0))),  vmovl_s8(vget_low_s8(vec1)));
+        int16x8_t high = vmulq_s16(vreinterpretq_s16_u16(vmovl_u8(vget_high_u8(u0))), vmovl_s8(vget_high_s8(vec1)));
+
+        int32x4_t p_lo = vpaddlq_s16(low);
+        int32x4_t p_hi = vpaddlq_s16(high);
+
+        int32x4_t dot = vpaddq_s32(p_lo, p_hi);
+        return vaddq_s32(sum, dot);
     }
 
     inline vepi32 dpbusdx2_epi32(const vepi32 sum, const vepi8 vec0, const vepi8 vec1, const vepi8 vec2, const vepi8 vec3) {
