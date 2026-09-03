@@ -12,18 +12,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Build Engine Binary
+      - name: Set up Build Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Build Android Binary
         run: |
           NDK_BIN="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           
+          make clean || true
           make arm64 \
             CXX="$NDK_BIN/aarch64-linux-android28-clang++ -static-libstdc++" \
-            HOST_CXX="g++"
+            HOST_CXX="g++ -DAUTOVEC"
 
-      - name: Upload Android Executable
+      - name: Upload Executable Artifact
         uses: actions/upload-artifact@v4
         with:
           name: tarnished-android-arm64
