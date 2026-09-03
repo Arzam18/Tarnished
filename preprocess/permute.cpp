@@ -5,6 +5,7 @@
 // Taken from Alexandria
 QuantisedNetwork quantisedNet;
 Network net;
+
 void permute_transpose() {
     for (int i = 0; i < INPUT_BUCKETS * 768 * L1_SIZE; ++i)
         net.FTWeights[i] = quantisedNet.FTWeights[i];
@@ -23,6 +24,9 @@ void permute_transpose() {
 #elif defined(USE_AVX2)
     constexpr int numRegi = 4;
     constexpr int order[numRegi] = {0, 2, 1, 3};
+#elif defined(USE_NEON)
+    constexpr int numRegi = 1;
+    constexpr int order[numRegi] = {0};
 #endif
 
     __m128i regi[numRegi];
@@ -45,7 +49,7 @@ void permute_transpose() {
 #endif
 
     for (int bucket = 0; bucket < OUTPUT_BUCKETS; ++bucket) {
-#ifndef AUTOVEC
+#if !defined(AUTOVEC) && !defined(USE_NEON)
         for (int i = 0; i < L1_SIZE / L1_CHUNK_PER_32; ++i)
             for (int j = 0; j < L2_SIZE; ++j)
                 for (int k = 0; k < L1_CHUNK_PER_32; ++k)
