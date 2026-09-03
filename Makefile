@@ -5,6 +5,7 @@ SOURCES := $(wildcard src/*.cpp)
 SOURCES += src/external/format.cpp
 _ROOT := $(_THIS)
 CXX := clang++
+HOST_CXX ?= g++
 
 ARCH_LEVEL ?= native
 ifeq ($(ARCH_LEVEL),native)
@@ -63,7 +64,7 @@ ifndef EXE
 endif
 
 $(EVALFILE_PROCESSED):
-	$(MAKE) -C preprocess ARCH_LEVEL=$(ARCH_LEVEL)
+	$(MAKE) -C preprocess ARCH_LEVEL=$(ARCH_LEVEL) HOST_CXX="$(HOST_CXX)"
 	./preprocess/permute$(EXE_SUFFIX) $(EVALFILE) $(EVALFILE_PROCESSED)
 	-$(RM) $(call fixpath,preprocess/permute$(EXE_SUFFIX))
 
