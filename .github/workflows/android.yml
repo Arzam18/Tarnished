@@ -24,16 +24,17 @@ jobs:
 
     steps:
 
-      # ---------------------------------------------------------
+      # =========================================================
       # Checkout
-      # ---------------------------------------------------------
+      # =========================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ---------------------------------------------------------
-      # Install required host packages
-      # ---------------------------------------------------------
+      # =========================================================
+      # Install host dependencies
+      # =========================================================
       - name: Install dependencies
+        shell: bash
         run: |
           set -e
 
@@ -44,34 +45,63 @@ jobs:
             curl \
             qemu-user
 
-      # ---------------------------------------------------------
-      # Locate Android SDK / NDK
-      # ---------------------------------------------------------
+      # =========================================================
+      # Configure Android NDK
+      # =========================================================
       - name: Configure Android NDK
         shell: bash
         run: |
           set -e
 
           ANDROID_SDK_ROOT="/usr/local/lib/android/sdk"
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+
           ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/$NDK_VERSION"
           ANDROID_NDK_BIN="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
+          echo "Android SDK:"
+          echo "$ANDROID_SDK_ROOT"
+
+          echo "Requested NDK:"
+          echo "$NDK_VERSION"
+
+          # -----------------------------------------------------
+          # Install NDK if it is not already present.
+          #
+          # IMPORTANT:
+          # GitHub Actions uses pipefail. `yes` receives SIGPIPE
+          # when sdkmanager finishes, which can otherwise cause
+          # the whole workflow to fail.
+          # -----------------------------------------------------
           if [ ! -d "$ANDROID_NDK_ROOT" ]; then
+
             echo "Installing Android NDK $NDK_VERSION..."
 
-            yes | \
-              "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
-              "ndk;$NDK_VERSION"
+            set +o pipefail
+            yes | "$SDKMANAGER" "ndk;$NDK_VERSION"
+            SDK_STATUS=${PIPESTATUS[1]}
+            set -o pipefail
+
+            if [ "$SDK_STATUS" -ne 0 ]; then
+              echo "ERROR: sdkmanager failed with status $SDK_STATUS"
+              exit "$SDK_STATUS"
+            fi
+
+          else
+            echo "Android NDK already installed."
           fi
 
+          # -----------------------------------------------------
+          # Verify NDK
+          # -----------------------------------------------------
           if [ ! -d "$ANDROID_NDK_ROOT" ]; then
-            echo "ERROR: Android NDK was not found."
+            echo "ERROR: NDK directory does not exist:"
+            echo "$ANDROID_NDK_ROOT"
             exit 1
           fi
 
           if [ ! -x "$ANDROID_NDK_BIN/aarch64-linux-android35-clang++" ]; then
-            echo "ERROR: Android ARM64 compiler was not found."
-            echo "Expected:"
+            echo "ERROR: ARM64 compiler not found:"
             echo "$ANDROID_NDK_BIN/aarch64-linux-android35-clang++"
             exit 1
           fi
@@ -80,16 +110,17 @@ jobs:
           echo "ANDROID_NDK_BIN=$ANDROID_NDK_BIN" >> "$GITHUB_ENV"
           echo "TOOLCHAIN_PREFIX=$ANDROID_NDK_BIN/aarch64-linux-android35-" >> "$GITHUB_ENV"
 
-          echo "NDK:"
+          echo
+          echo "NDK installed successfully:"
           echo "$ANDROID_NDK_ROOT"
 
           echo
-          echo "Compiler:"
+          echo "ARM64 compiler:"
           "$ANDROID_NDK_BIN/aarch64-linux-android35-clang++" --version
 
-      # ---------------------------------------------------------
+      # =========================================================
       # Download sse2neon
-      # ---------------------------------------------------------
+      # =========================================================
       - name: Download sse2neon
         shell: bash
         run: |
@@ -101,13 +132,13 @@ jobs:
 
           test -s sse2neon.h
 
-          echo "sse2neon.h downloaded:"
+          echo "sse2neon.h downloaded successfully."
           wc -c sse2neon.h
 
-      # ---------------------------------------------------------
-      # Patch x86 SIMD includes for ARM
-      # ---------------------------------------------------------
-      - name: Patch SIMD includes
+      # =========================================================
+      # Patch x86 SIMD includes
+      # =========================================================
+      - name: Patch SIMD includes for ARM64
         shell: bash
         run: |
           set -e
@@ -115,7 +146,7 @@ jobs:
           python3 <<'PY'
           import os
 
-          skip = {
+          skip_dirs = {
               ".git",
               ".github",
               "build",
@@ -123,10 +154,16 @@ jobs:
           }
 
           for root, dirs, files in os.walk("."):
-              dirs[:] = [d for d in dirs if d not in skip]
+              dirs[:] = [
+                  d for d in dirs
+                  if d not in skip_dirs
+              ]
 
               for filename in files:
-                  if not filename.endswith((".cpp", ".cc", ".c", ".h", ".hpp")):
+
+                  if not filename.endswith(
+                      (".cpp", ".cc", ".c", ".h", ".hpp")
+                  ):
                       continue
 
                   path = os.path.join(root, filename)
@@ -138,13 +175,13 @@ jobs:
                           encoding="utf-8",
                           errors="ignore"
                       ) as f:
-                          data = f.read()
+                          content = f.read()
                   except Exception:
                       continue
 
-                  old = data
+                  original = content
 
-                  data = data.replace(
+                  content = content.replace(
                       "#include <immintrin.h>",
                       """#if defined(__aarch64__) || defined(__ARM_NEON)
           #include "sse2neon.h"
@@ -153,16 +190,21 @@ jobs:
           #endif"""
                   )
 
-                  if data != old:
-                      with open(path, "w", encoding="utf-8") as f:
-                          f.write(data)
+                  if content != original:
+
+                      with open(
+                          path,
+                          "w",
+                          encoding="utf-8"
+                      ) as f:
+                          f.write(content)
 
                       print("Patched:", path)
           PY
 
-      # ---------------------------------------------------------
+      # =========================================================
       # Download NNUE network
-      # ---------------------------------------------------------
+      # =========================================================
       - name: Download NNUE network
         shell: bash
         run: |
@@ -172,16 +214,17 @@ jobs:
 
           NETWORK="$(cat network.txt).bin"
 
-          echo "Network: $NETWORK"
+          echo "Network:"
+          echo "$NETWORK"
 
           test -f "$NETWORK"
           test -s "$NETWORK"
 
           ls -lh "$NETWORK"
 
-      # ---------------------------------------------------------
-      # Build network preprocessor on Ubuntu
-      # ---------------------------------------------------------
+      # =========================================================
+      # Build host network preprocessor
+      # =========================================================
       - name: Build network preprocessor
         shell: bash
         run: |
@@ -200,11 +243,11 @@ jobs:
 
           test -x preprocess/permute
 
-          echo "Preprocessor built successfully."
+          echo "Network preprocessor built successfully."
 
-      # ---------------------------------------------------------
+      # =========================================================
       # Generate processed NNUE network
-      # ---------------------------------------------------------
+      # =========================================================
       - name: Generate processed network
         shell: bash
         run: |
@@ -212,8 +255,11 @@ jobs:
 
           NETWORK="$(cat network.txt).bin"
 
-          echo "Input : $NETWORK"
-          echo "Output: processed.bin"
+          echo "Input network:"
+          echo "$NETWORK"
+
+          echo "Output:"
+          echo "processed.bin"
 
           rm -f processed.bin
 
@@ -228,22 +274,17 @@ jobs:
           echo "Processed network:"
           ls -lh processed.bin
 
-      # ---------------------------------------------------------
-      # Build Tarnished ARM64
+      # =========================================================
+      # Compile Tarnished ARM64
       #
-      # IMPORTANT:
-      # Do NOT override CXXFLAGS.
+      # DO NOT override CXXFLAGS.
       #
-      # The Makefile already supplies:
+      # The Makefile already generates:
       #
       # -DEVALFILE=\"processed.bin\"
       #
-      # This avoids the previous:
-      #
-      # -DEVALFILE=\processed.bin\
-      #
-      # error.
-      # ---------------------------------------------------------
+      # This avoids the previous EVALFILE quoting failure.
+      # =========================================================
       - name: Compile Tarnished ARM64
         shell: bash
         run: |
@@ -251,7 +292,11 @@ jobs:
 
           export PATH="$ANDROID_NDK_BIN:$PATH"
 
-          echo "Building Android ARM64..."
+          echo "Compiler:"
+          "$TOOLCHAIN_PREFIX"clang++ --version
+
+          echo
+          echo "Building Tarnished ARM64..."
 
           make native \
             CXX="${TOOLCHAIN_PREFIX}clang++" \
@@ -267,9 +312,9 @@ jobs:
 
           ls -lh tarnished-android-arm64
 
-      # ---------------------------------------------------------
-      # Verify architecture
-      # ---------------------------------------------------------
+      # =========================================================
+      # Verify executable architecture
+      # =========================================================
       - name: Verify ARM64 executable
         shell: bash
         run: |
@@ -282,23 +327,23 @@ jobs:
 
           echo "ARM64 verification successful."
 
-      # ---------------------------------------------------------
-      # Run bench using QEMU
-      # ---------------------------------------------------------
+      # =========================================================
+      # Run ARM64 bench under QEMU
+      # =========================================================
       - name: Run ARM64 bench
         shell: bash
         run: |
           set -e
 
-          echo "Running ARM64 engine through QEMU..."
+          echo "Running Tarnished ARM64 bench..."
 
           qemu-aarch64 \
             ./tarnished-android-arm64 \
             bench
 
-      # ---------------------------------------------------------
-      # Upload binary
-      # ---------------------------------------------------------
+      # =========================================================
+      # Upload artifact
+      # =========================================================
       - name: Upload Android ARM64 binary
         uses: actions/upload-artifact@v4
         with:
