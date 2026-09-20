@@ -1,22 +1,307 @@
-    - name: Compile Tarnished for Android (aarch64)
-      run: |
-        export PATH=${{ env.ANDROID_NDK_BIN }}:$PATH
+name: Tarnished Android ARM64 Build
 
-        # Download the network
-        make download-net
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
 
-        # Build the network preprocessor for the host
-        g++ -O3 -std=c++20 -I. -I./src \
-          preprocess/permute.cpp src/parameters.cpp \
-          -o preprocess/permute
+permissions:
+  contents: write
 
-        # Generate the ARM-targeted processed network
-        ./preprocess/permute $(cat network.txt).bin processed.bin
+jobs:
+  android-arm64:
+    name: Build Tarnished for Android ARM64
+    runs-on: ubuntu-24.04
 
-        # Build Tarnished for Android ARM64
-        make native \
-          CXX="${{ env.TOOLCHAIN_PREFIX }}clang++" \
-          ARCH="-march=armv8-a" \
-          CXXFLAGS="-O3 -march=armv8-a -fno-finite-math-only -funroll-loops -flto -std=c++20 -stdlib=libc++ -fexperimental-library -DNDEBUG -pthread -DEVALFILE=\\\"processed.bin\\\"" \
-          LDFLAGS="-fuse-ld=lld -static-libstdc++" \
-          EXE=tarnished-android-arm64
+    env:
+      NDK_VERSION: "27.2.12479018"
+
+    steps:
+
+      # ---------------------------------------------------------
+      # Checkout
+      # ---------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------
+      # Install required host packages
+      # ---------------------------------------------------------
+      - name: Install dependencies
+        run: |
+          set -e
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            g++ \
+            curl \
+            qemu-user
+
+      # ---------------------------------------------------------
+      # Locate Android SDK / NDK
+      # ---------------------------------------------------------
+      - name: Configure Android NDK
+        shell: bash
+        run: |
+          set -e
+
+          ANDROID_SDK_ROOT="/usr/local/lib/android/sdk"
+          ANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/$NDK_VERSION"
+          ANDROID_NDK_BIN="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+          if [ ! -d "$ANDROID_NDK_ROOT" ]; then
+            echo "Installing Android NDK $NDK_VERSION..."
+
+            yes | \
+              "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+              "ndk;$NDK_VERSION"
+          fi
+
+          if [ ! -d "$ANDROID_NDK_ROOT" ]; then
+            echo "ERROR: Android NDK was not found."
+            exit 1
+          fi
+
+          if [ ! -x "$ANDROID_NDK_BIN/aarch64-linux-android35-clang++" ]; then
+            echo "ERROR: Android ARM64 compiler was not found."
+            echo "Expected:"
+            echo "$ANDROID_NDK_BIN/aarch64-linux-android35-clang++"
+            exit 1
+          fi
+
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_BIN=$ANDROID_NDK_BIN" >> "$GITHUB_ENV"
+          echo "TOOLCHAIN_PREFIX=$ANDROID_NDK_BIN/aarch64-linux-android35-" >> "$GITHUB_ENV"
+
+          echo "NDK:"
+          echo "$ANDROID_NDK_ROOT"
+
+          echo
+          echo "Compiler:"
+          "$ANDROID_NDK_BIN/aarch64-linux-android35-clang++" --version
+
+      # ---------------------------------------------------------
+      # Download sse2neon
+      # ---------------------------------------------------------
+      - name: Download sse2neon
+        shell: bash
+        run: |
+          set -e
+
+          curl -fL \
+            https://raw.githubusercontent.com/DLTcollab/sse2neon/master/sse2neon.h \
+            -o sse2neon.h
+
+          test -s sse2neon.h
+
+          echo "sse2neon.h downloaded:"
+          wc -c sse2neon.h
+
+      # ---------------------------------------------------------
+      # Patch x86 SIMD includes for ARM
+      # ---------------------------------------------------------
+      - name: Patch SIMD includes
+        shell: bash
+        run: |
+          set -e
+
+          python3 <<'PY'
+          import os
+
+          skip = {
+              ".git",
+              ".github",
+              "build",
+              "dist",
+          }
+
+          for root, dirs, files in os.walk("."):
+              dirs[:] = [d for d in dirs if d not in skip]
+
+              for filename in files:
+                  if not filename.endswith((".cpp", ".cc", ".c", ".h", ".hpp")):
+                      continue
+
+                  path = os.path.join(root, filename)
+
+                  try:
+                      with open(
+                          path,
+                          "r",
+                          encoding="utf-8",
+                          errors="ignore"
+                      ) as f:
+                          data = f.read()
+                  except Exception:
+                      continue
+
+                  old = data
+
+                  data = data.replace(
+                      "#include <immintrin.h>",
+                      """#if defined(__aarch64__) || defined(__ARM_NEON)
+          #include "sse2neon.h"
+          #else
+          #include <immintrin.h>
+          #endif"""
+                  )
+
+                  if data != old:
+                      with open(path, "w", encoding="utf-8") as f:
+                          f.write(data)
+
+                      print("Patched:", path)
+          PY
+
+      # ---------------------------------------------------------
+      # Download NNUE network
+      # ---------------------------------------------------------
+      - name: Download NNUE network
+        shell: bash
+        run: |
+          set -e
+
+          make download-net
+
+          NETWORK="$(cat network.txt).bin"
+
+          echo "Network: $NETWORK"
+
+          test -f "$NETWORK"
+          test -s "$NETWORK"
+
+          ls -lh "$NETWORK"
+
+      # ---------------------------------------------------------
+      # Build network preprocessor on Ubuntu
+      # ---------------------------------------------------------
+      - name: Build network preprocessor
+        shell: bash
+        run: |
+          set -e
+
+          rm -f preprocess/permute
+
+          g++ \
+            -O3 \
+            -std=c++20 \
+            -I. \
+            -I./src \
+            preprocess/permute.cpp \
+            src/parameters.cpp \
+            -o preprocess/permute
+
+          test -x preprocess/permute
+
+          echo "Preprocessor built successfully."
+
+      # ---------------------------------------------------------
+      # Generate processed NNUE network
+      # ---------------------------------------------------------
+      - name: Generate processed network
+        shell: bash
+        run: |
+          set -e
+
+          NETWORK="$(cat network.txt).bin"
+
+          echo "Input : $NETWORK"
+          echo "Output: processed.bin"
+
+          rm -f processed.bin
+
+          ./preprocess/permute \
+            "$NETWORK" \
+            processed.bin
+
+          test -f processed.bin
+          test -s processed.bin
+
+          echo
+          echo "Processed network:"
+          ls -lh processed.bin
+
+      # ---------------------------------------------------------
+      # Build Tarnished ARM64
+      #
+      # IMPORTANT:
+      # Do NOT override CXXFLAGS.
+      #
+      # The Makefile already supplies:
+      #
+      # -DEVALFILE=\"processed.bin\"
+      #
+      # This avoids the previous:
+      #
+      # -DEVALFILE=\processed.bin\
+      #
+      # error.
+      # ---------------------------------------------------------
+      - name: Compile Tarnished ARM64
+        shell: bash
+        run: |
+          set -e
+
+          export PATH="$ANDROID_NDK_BIN:$PATH"
+
+          echo "Building Android ARM64..."
+
+          make native \
+            CXX="${TOOLCHAIN_PREFIX}clang++" \
+            ARCH="-march=armv8-a" \
+            LDFLAGS="-static-libstdc++" \
+            EXE=tarnished-android-arm64
+
+          test -f tarnished-android-arm64
+          test -s tarnished-android-arm64
+
+          echo
+          echo "Build successful."
+
+          ls -lh tarnished-android-arm64
+
+      # ---------------------------------------------------------
+      # Verify architecture
+      # ---------------------------------------------------------
+      - name: Verify ARM64 executable
+        shell: bash
+        run: |
+          set -e
+
+          file tarnished-android-arm64
+
+          file tarnished-android-arm64 | grep -Eiq \
+            "aarch64|ARM aarch64|ARM64"
+
+          echo "ARM64 verification successful."
+
+      # ---------------------------------------------------------
+      # Run bench using QEMU
+      # ---------------------------------------------------------
+      - name: Run ARM64 bench
+        shell: bash
+        run: |
+          set -e
+
+          echo "Running ARM64 engine through QEMU..."
+
+          qemu-aarch64 \
+            ./tarnished-android-arm64 \
+            bench
+
+      # ---------------------------------------------------------
+      # Upload binary
+      # ---------------------------------------------------------
+      - name: Upload Android ARM64 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarnished-android-arm64
+          path: tarnished-android-arm64
+          if-no-files-found: error
