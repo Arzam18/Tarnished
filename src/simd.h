@@ -16,6 +16,7 @@
     inline vepi16 set1_epi16(int16_t v){ return vdupq_n_s16(v); }
     inline vepi16 load_epi16(const vepi16* p){ return vld1q_s16(reinterpret_cast<const int16_t*>(p)); }
     inline void   store_epi16(vepi16* p, vepi16 v){ vst1q_s16(reinterpret_cast<int16_t*>(p), v); }
+    inline void   store_epi8(vepi8* p, vepi8 v){ vst1q_s8(reinterpret_cast<int8_t*>(p), v); }
 
     inline vepi16 min_epi16(vepi16 a, vepi16 b){ return vminq_s16(a,b); }
     inline vepi16 max_epi16(vepi16 a, vepi16 b){ return vmaxq_s16(a,b); }
