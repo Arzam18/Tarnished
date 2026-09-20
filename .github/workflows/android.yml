@@ -1,16 +1,14 @@
- name: Tarnished Android ARM64 Build
+name: Tarnished Android ARM64 Build
 
 on:
   push:
     branches:
       - master
       - main
-
   pull_request:
     branches:
       - master
       - main
-
   workflow_dispatch:
 
 permissions:
@@ -29,13 +27,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
-        shell: bash
+      - name: Install dependencies
         run: |
-          set -e
-
           sudo apt-get update
-
           sudo apt-get install -y \
             g++ \
             curl \
@@ -48,32 +42,31 @@ jobs:
         run: |
           set -e
 
-          ANDROID_SDK_ROOT="$HOME/android-sdk"
+          SDK="$HOME/android-sdk"
 
-          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          mkdir -p "$SDK/cmdline-tools"
 
           curl -L \
             -o /tmp/cmdline-tools.zip \
             https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
 
-          rm -rf "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          rm -rf "$SDK/cmdline-tools/latest"
 
-          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          mkdir -p "$SDK/cmdline-tools/latest"
 
           unzip -q \
             /tmp/cmdline-tools.zip \
-            -d "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+            -d "$SDK/cmdline-tools/latest"
 
           mv \
-            "$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools/"* \
-            "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
+            "$SDK/cmdline-tools/latest/cmdline-tools/"* \
+            "$SDK/cmdline-tools/latest/"
 
-          rm -rf \
-            "$ANDROID_SDK_ROOT/cmdline-tools/latest/cmdline-tools"
+          rm -rf "$SDK/cmdline-tools/latest/cmdline-tools"
 
-          export ANDROID_HOME="$ANDROID_SDK_ROOT"
+          export ANDROID_HOME="$SDK"
 
-          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          export PATH="$SDK/cmdline-tools/latest/bin:$SDK/platform-tools:$PATH"
 
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
 
@@ -84,59 +77,45 @@ jobs:
             "platforms;android-${ANDROID_API}" \
             "ndk;${NDK_VERSION}"
 
-          SDK_STATUS=${PIPESTATUS[1]}
+          STATUS=${PIPESTATUS[1]}
 
           set -o pipefail
 
-          if [ "$SDK_STATUS" -ne 0 ]; then
-            echo "sdkmanager failed with status $SDK_STATUS"
-            exit "$SDK_STATUS"
+          if [ "$STATUS" -ne 0 ]; then
+            exit "$STATUS"
           fi
 
-          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$SDK/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
 
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+          echo "$SDK/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
 
-          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-
-          echo "$ANDROID_SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
-
-          echo "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
-
-      - name: Verify Android NDK
+      - name: Verify NDK
         shell: bash
         run: |
           set -e
 
-          echo "NDK:"
-          echo "$ANDROID_NDK_HOME"
+          CXX="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang++"
 
-          test -d "$ANDROID_NDK_HOME"
-
-          AARCH64_CXX="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang++"
-
-          echo
-          echo "Compiler:"
-          "$AARCH64_CXX" --version
+          echo "Using compiler:"
+          "$CXX" --version
 
       - name: Download sse2neon
-        shell: bash
         run: |
-          set -e
-
           curl -L \
             https://github.com/DLTcollab/sse2neon/raw/master/sse2neon.h \
             -o sse2neon.h
 
           test -s sse2neon.h
 
-      - name: Patch SSE include for ARM
+      - name: Patch SSE include
         shell: bash
         run: |
           set -e
 
           while IFS= read -r file; do
-
             [ -z "$file" ] && continue
 
             python3 - "$file" <<'PY'
@@ -144,7 +123,6 @@ import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
-
 text = path.read_text()
 
 old = "#include <immintrin.h>"
@@ -156,10 +134,8 @@ new = """#if defined(__aarch64__) || defined(__ARM_NEON)
 #endif"""
 
 if old in text:
-    text = text.replace(old, new)
-    path.write_text(text)
-    print(f"Patched: {path}")
-
+    path.write_text(text.replace(old, new))
+    print("Patched:", path)
 PY
 
           done < <(
@@ -169,27 +145,11 @@ PY
               2>/dev/null || true
           )
 
-      - name: Show ARM SIMD configuration
-        shell: bash
-        run: |
-          set -e
-
-          echo "ARM SIMD references:"
-
-          grep -n \
-            -E 'aarch64|ARM_NEON|NEON|sse2neon' \
-            src/simd.h \
-            src/nnue.cpp \
-            2>/dev/null || true
-
       - name: Download NNUE network
-        shell: bash
         run: |
-          set -e
-
           make download-net
 
-      - name: Build host permutation tool
+      - name: Build permutation tool
         shell: bash
         run: |
           set -e
@@ -205,67 +165,58 @@ PY
 
           test -x preprocess/permute
 
-      - name: Generate processed NNUE file
+      - name: Generate processed network
         shell: bash
         run: |
           set -e
 
           ./preprocess/permute
 
-          echo
-          echo "Generated NNUE files:"
-
+          echo "Generated network files:"
           find . -maxdepth 3 -type f \
             \( -name "*.bin" -o -name "*.nnue" \) \
             -printf '%p %s bytes\n' \
             | sort
 
-      - name: Build Android ARM64 binary
+      - name: Build Tarnished Android ARM64
         shell: bash
         run: |
           set -e
 
-          AARCH64_CXX="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang++"
+          CXX="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang++"
 
           echo "Building with:"
-          echo "$AARCH64_CXX"
+          echo "$CXX"
 
           make native \
-            CXX="$AARCH64_CXX" \
+            CXX="$CXX" \
             ARCH="-march=armv8-a" \
             LDFLAGS="-static-libstdc++" \
             EXE="tarnished-android-arm64"
 
           test -f tarnished-android-arm64
 
-          echo
-          echo "Binary:"
           ls -lh tarnished-android-arm64
 
-      - name: Verify Android ARM64 executable
+      - name: Verify ARM64 binary
         shell: bash
         run: |
           set -e
 
-          echo "========================================"
-          echo "Android ARM64 executable verification"
-          echo "========================================"
-
+          echo "File:"
           file tarnished-android-arm64
 
           echo
           echo "ELF header:"
-
           readelf -h tarnished-android-arm64
 
           echo
-          echo "Program interpreter:"
-
+          echo "Interpreter:"
           readelf -l tarnished-android-arm64 \
             | grep -i interpreter || true
 
           echo
-          echo "Checking architecture..."
+          echo "Checking AArch64..."
 
           file tarnished-android-arm64 \
             | grep -Eiq 'aarch64|ARM aarch64|ARM64'
@@ -277,7 +228,7 @@ PY
             | grep -q 'ELF64'
 
           echo
-          echo "Android ARM64 executable verified successfully."
+          echo "SUCCESS: Android ARM64 binary verified."
 
       - name: Upload Android ARM64 binary
         uses: actions/upload-artifact@v4
