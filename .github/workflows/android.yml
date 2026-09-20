@@ -179,9 +179,6 @@ jobs:
 
           echo "Building Tarnished for Android ARM64..."
 
-          echo "Compiler:"
-          echo "$ANDROID_CXX"
-
           "$ANDROID_CXX" \
             -O3 \
             -march=armv8-a \
@@ -192,6 +189,7 @@ jobs:
             -std=c++20 \
             -DNDEBUG \
             -pthread \
+            -static-libstdc++ \
             -DEVALFILE=\"processed.bin\" \
             src/*.cpp \
             src/external/format.cpp \
@@ -204,44 +202,58 @@ jobs:
           echo "Android ARM64 binary:"
           ls -lh tarnished-android-arm64
 
-      - name: Verify ARM64 binary
+      - name: Verify Android ARM64 binary
         shell: bash
         run: |
           set -e
 
-          echo "===== file ====="
+          echo "===== FILE ====="
           file tarnished-android-arm64
 
           echo
-          echo "===== ELF header ====="
+          echo "===== ELF HEADER ====="
           readelf -h tarnished-android-arm64
 
           echo
-          echo "===== ELF machine ====="
-
+          echo "===== ELF MACHINE ====="
           MACHINE="$(readelf -h tarnished-android-arm64 | grep 'Machine:')"
-
           echo "$MACHINE"
 
           echo "$MACHINE" | grep -qi 'AArch64'
 
           echo
-          echo "===== ELF class ====="
-
+          echo "===== ELF CLASS ====="
           CLASS="$(readelf -h tarnished-android-arm64 | grep 'Class:')"
-
           echo "$CLASS"
 
           echo "$CLASS" | grep -q 'ELF64'
 
           echo
-          echo "===== Program interpreter ====="
+          echo "===== REQUIRED SHARED LIBRARIES ====="
+
+          NEEDED="$(readelf -d tarnished-android-arm64 | grep 'NEEDED' || true)"
+
+          if echo "$NEEDED" | grep -q 'libc++_shared.so'; then
+            echo "ERROR: libc++_shared.so is still required."
+            echo "$NEEDED"
+            exit 1
+          fi
+
+          if [ -n "$NEEDED" ]; then
+            echo "$NEEDED"
+          else
+            echo "No dynamic library dependencies."
+          fi
+
+          echo
+          echo "===== PROGRAM INTERPRETER ====="
 
           readelf -l tarnished-android-arm64 \
             | grep -i interpreter || true
 
           echo
-          echo "SUCCESS: Android ARM64 ELF64 binary created."
+          echo "SUCCESS:"
+          echo "ARM64 Android binary built with static libc++ runtime."
 
       - name: Upload Android ARM64 binary
         uses: actions/upload-artifact@v4
