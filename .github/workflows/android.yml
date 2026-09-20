@@ -65,7 +65,6 @@ jobs:
           rm -rf "$SDK/cmdline-tools/latest/cmdline-tools"
 
           export ANDROID_HOME="$SDK"
-
           export PATH="$SDK/cmdline-tools/latest/bin:$SDK/platform-tools:$PATH"
 
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
@@ -119,24 +118,24 @@ jobs:
             [ -z "$file" ] && continue
 
             python3 - "$file" <<'PY'
-import sys
-from pathlib import Path
+            import sys
+            from pathlib import Path
 
-path = Path(sys.argv[1])
-text = path.read_text()
+            path = Path(sys.argv[1])
+            text = path.read_text()
 
-old = "#include <immintrin.h>"
+            old = "#include <immintrin.h>"
 
-new = """#if defined(__aarch64__) || defined(__ARM_NEON)
-#include "../sse2neon.h"
-#else
-#include <immintrin.h>
-#endif"""
+            new = """#if defined(__aarch64__) || defined(__ARM_NEON)
+            #include "../sse2neon.h"
+            #else
+            #include <immintrin.h>
+            #endif"""
 
-if old in text:
-    path.write_text(text.replace(old, new))
-    print("Patched:", path)
-PY
+            if old in text:
+                path.write_text(text.replace(old, new))
+                print("Patched:", path)
+            PY
 
           done < <(
             grep -RIl \
@@ -173,6 +172,7 @@ PY
           ./preprocess/permute
 
           echo "Generated network files:"
+
           find . -maxdepth 3 -type f \
             \( -name "*.bin" -o -name "*.nnue" \) \
             -printf '%p %s bytes\n' \
@@ -216,13 +216,13 @@ PY
             | grep -i interpreter || true
 
           echo
-          echo "Checking AArch64..."
+          echo "Checking AArch64:"
 
           file tarnished-android-arm64 \
             | grep -Eiq 'aarch64|ARM aarch64|ARM64'
 
           echo
-          echo "Checking ELF64..."
+          echo "Checking ELF64:"
 
           readelf -h tarnished-android-arm64 \
             | grep -q 'ELF64'
