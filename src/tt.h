@@ -51,6 +51,7 @@ inline int storeScore(int score, int ply) {
         score += score < 0 ? -ply : ply;
     return score;
 }
+
 inline int readScore(int score, int ply) {
     if (std::abs(score) >= FOUND_MATE)
         score += score < 0 ? ply : -ply;
@@ -65,14 +66,22 @@ struct TTEntry {
     uint8_t depth;
     uint8_t flags;
 
-    bool pv() { return (flags >> 2) & 1; }
+    bool pv() {
+        return (flags >> 2) & 1;
+    }
 
-    uint8_t gen() { return flags >> 3; }
+    uint8_t gen() {
+        return flags >> 3;
+    }
 
-    uint8_t bound() { return flags & 3; }
+    uint8_t bound() {
+        return flags & 3;
+    }
 
     void setFlag(bool pv, uint32_t gen, uint8_t bound) {
-        flags = static_cast<uint32_t>(bound) | (static_cast<uint32_t>(pv) << 2) | (gen << 3);
+        flags = static_cast<uint32_t>(bound)
+              | (static_cast<uint32_t>(pv) << 2)
+              | (gen << 3);
     }
 };
 
@@ -94,23 +103,35 @@ class TTable {
 
 public:
     int mbSize = 16;
+
     TTable() {
         resize(16);
     }
+
     ~TTable() {
         std::free(clusters);
     }
 
     void resize(int mb = 16) {
         mbSize = mb;
-        size_t clusterCount = static_cast<uint64_t>(mb) * 1024 * 1024 / sizeof(TTCluster);
+
+        size_t clusterCount =
+            static_cast<uint64_t>(mb) * 1024 * 1024 / sizeof(TTCluster);
+
         if (clusterCount == size)
             return;
 
         std::free(clusters);
 
         size = clusterCount;
-        clusters = static_cast<TTCluster*>(alignedAlloc(TT_ALIGNMENT, size * sizeof(TTCluster)));
+
+        clusters = static_cast<TTCluster*>(
+            alignedAlloc(
+                TT_ALIGNMENT,
+                size * sizeof(TTCluster)
+            )
+        );
+
         currAge = 0;
     }
 
@@ -121,6 +142,7 @@ public:
     bool probe(uint64_t key, int ply, ProbedTTEntry& ttData) {
         size_t idx = index(key);
         TTCluster& cluster = clusters[idx];
+
         int entryIdx = -1;
         uint16_t key16 = static_cast<uint16_t>(key);
 
@@ -146,12 +168,23 @@ public:
         return true;
     }
 
-    void store(uint64_t key, Move move, int score, int staticEval, uint8_t bound, int depth, int ply, bool pv) {
+    void store(
+        uint64_t key,
+        Move move,
+        int score,
+        int staticEval,
+        uint8_t bound,
+        int depth,
+        int ply,
+        bool pv
+    ) {
         uint16_t key16 = static_cast<uint16_t>(key);
         TTCluster& cluster = clusters[index(key)];
 
         auto entryValue = [this](auto& entry) {
-            int32_t relativeAge = (GEN_CYCLE_LENGTH + currAge - entry.gen()) & AGE_MASK;
+            int32_t relativeAge =
+                (GEN_CYCLE_LENGTH + currAge - entry.gen()) & AGE_MASK;
+
             return entry.depth - relativeAge * 2;
         };
 
@@ -159,12 +192,16 @@ public:
         auto minValue = std::numeric_limits<int32_t>::max();
 
         for (auto& candidate : cluster.entries) {
-            if (candidate.key16 == key16 || candidate.bound() == TTFlag::NO_BOUND) {
+            if (
+                candidate.key16 == key16
+                || candidate.bound() == TTFlag::NO_BOUND
+            ) {
                 entryPtr = &candidate;
                 break;
             }
 
             auto value = entryValue(candidate);
+
             if (value < minValue) {
                 entryPtr = &candidate;
                 minValue = value;
@@ -173,14 +210,23 @@ public:
 
         auto entry = *entryPtr;
 
-        if ( !(bound == TTFlag::EXACT || key16 != entry.key16 || entry.gen() != currAge || depth + 4 + pv * 2 > entry.depth) )
+        if (
+            !(
+                bound == TTFlag::EXACT
+                || key16 != entry.key16
+                || entry.gen() != currAge
+                || depth + 4 + pv * 2 > entry.depth
+            )
+        )
             return;
 
         if (!moveIsNull(move) || key16 != entry.key16)
             entry.bestMove = move.move();
 
         entry.key16 = key16;
-        entry.score = static_cast<int16_t>(storeScore(score, ply));
+        entry.score = static_cast<int16_t>(
+            storeScore(score, ply)
+        );
         entry.staticEval = static_cast<int16_t>(staticEval);
         entry.depth = static_cast<uint8_t>(depth);
         entry.setFlag(pv, currAge, bound);
@@ -191,29 +237,53 @@ public:
     void incAge() {
         currAge = (currAge + 1) % GEN_CYCLE_LENGTH;
     }
+
     void clear(int numThreads = 1) {
         currAge = 0;
-        std::vector<std::jthread> threads;
+
+        std::vector<std::thread> threads;
         threads.reserve(numThreads);
+
         for (int i = 0; i < numThreads; i++) {
             threads.emplace_back(
                 [i, this, numThreads]() {
-                    auto begin = clusters + size * i / numThreads;
-                    auto end = clusters + size * (i + 1) / numThreads;
-                    std::fill(begin, end, TTCluster{});
-                });
+                    auto begin =
+                        clusters + size * i / numThreads;
+
+                    auto end =
+                        clusters + size * (i + 1) / numThreads;
+
+                    std::fill(
+                        begin,
+                        end,
+                        TTCluster{}
+                    );
+                }
+            );
+        }
+
+        // std::jthread automatically joins when destroyed.
+        // std::thread does not, so explicitly join every worker.
+        for (auto& thread : threads) {
+            thread.join();
         }
     }
 
     int hashfull() {
         int count = 0;
+
         for (int i = 0; i < 1000; i++) {
             for (int j = 0; j < ENTRY_COUNT; j++) {
                 auto& entry = clusters[i].entries[j];
-                if (entry.bound() != TTFlag::NO_BOUND && entry.gen() == currAge)
+
+                if (
+                    entry.bound() != TTFlag::NO_BOUND
+                    && entry.gen() == currAge
+                )
                     count++;
             }
         }
+
         return count / ENTRY_COUNT;
     }
 
@@ -221,7 +291,13 @@ private:
     TTCluster* clusters;
     size_t size;
     uint32_t currAge;
+
     uint32_t index(uint64_t key) {
-        return static_cast<std::uint64_t>((static_cast<u128>(key) * static_cast<u128>(size)) >> 64);
+        return static_cast<std::uint64_t>(
+            (
+                static_cast<u128>(key)
+                * static_cast<u128>(size)
+            ) >> 64
+        );
     }
 };
