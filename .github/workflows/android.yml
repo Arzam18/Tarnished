@@ -33,59 +33,24 @@ jobs:
         echo "ANDROID_NDK_BIN=$ANDROID_NDK_BIN" >> $GITHUB_ENV
         echo "TOOLCHAIN_PREFIX=$ANDROID_NDK_BIN/aarch64-linux-android35-" >> $GITHUB_ENV
 
-    - name: Download sse2neon Header
-      run: |
-        curl -sL https://raw.githubusercontent.com/DLTcollab/sse2neon/master/sse2neon.h -o sse2neon.h
-
-    - name: Patch SIMD Headers for ARM64 Cross-Compilation
-      run: |
-        cat << 'EOF' > patch_simd.py
-        import os
-        import re
-
-        def patch_file(path):
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
-
-            original = content
-
-            # Safely replace the entire #include <immintrin.h> directive
-            if "<immintrin.h>" in content:
-                replacement = """#if defined(__aarch64__) || defined(__ARM_NEON)
-        #include "sse2neon.h"
-        #else
-        #include <immintrin.h>
-        #endif"""
-                content = re.sub(r'#include\s*<immintrin\.h>', replacement, content)
-
-            if content != original:
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(content)
-                print(f"Patched: {path}")
-
-        for root, dirs, files in os.walk("."):
-            for file in files:
-                if file.endswith((".h", ".hpp", ".cpp", ".c")):
-                    patch_file(os.path.join(root, file))
-        EOF
-        python3 patch_simd.py
-
-    - name: Compile Tarnished for Android (aarch64)
+    - name: Compile Tarnished for Android (aarch64 NEON)
       run: |
         export PATH=${{ env.ANDROID_NDK_BIN }}:$PATH
-        
-        # 1. Download network and build preprocessor helper locally on host (x86)
+
+        # 1. Download the network and build the host-side preprocessing helper.
+        # The network permutation runs on the x86_64 GitHub runner.
         make download-net
-        g++ -O3 -std=c++20 -I. -I./src preprocess/permute.cpp src/parameters.cpp -o preprocess/permute
-        
-        # 2. Run the preprocessor manually to generate processed.bin
+        g++ -O3 -std=c++20 -DTARNISHED_TARGET_NEON -I. -I./src preprocess/permute.cpp src/parameters.cpp -o preprocess/permute
+
+        # 2. Generate the processed network on the host.
         ./preprocess/permute $(cat network.txt).bin processed.bin
 
-        # 3. Compile main engine targeting Android ARM64 using NDK Clang with sse2neon
+        # 3. Build the engine for Android ARM64. AArch64 has NEON in the
+        # armv8-a baseline, so src/simd.h selects Tarnished's NEON path.
         make native \
           CXX="${{ env.TOOLCHAIN_PREFIX }}clang++" \
           ARCH="-march=armv8-a" \
-          CXXFLAGS="-O3 -march=armv8-a -funroll-loops -flto -std=c++20 -stdlib=libc++ -fexperimental-library -DNDEBUG -pthread -DEVALFILE=\\\"processed.bin\\\"" \
+          CXXFLAGS="-O3 -march=armv8-a -funroll-loops -flto -fno-finite-math-only -std=c++20 -stdlib=libc++ -fexperimental-library -DNDEBUG -pthread -DEVALFILE=\\"processed.bin\\"" \
           LDFLAGS="-fuse-ld=lld -static-libstdc++" \
           EXE=tarnished-android-arm64
 
