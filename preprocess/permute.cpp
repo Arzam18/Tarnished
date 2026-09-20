@@ -12,7 +12,7 @@ void permute_transpose() {
     for (int i = 0; i < L1_SIZE; ++i)
         net.FTBiases[i] = quantisedNet.FTBiases[i];
 
-#ifndef AUTOVEC
+#if !defined(AUTOVEC) && !defined(TARNISHED_TARGET_NEON)
     __m128i *weight = reinterpret_cast<__m128i*>(net.FTWeights);
     __m128i *biases = reinterpret_cast<__m128i*>(net.FTBiases);
     constexpr int numChunks = sizeof(__m128i) / sizeof(int16_t);
@@ -45,13 +45,18 @@ void permute_transpose() {
 #endif
 
     for (int bucket = 0; bucket < OUTPUT_BUCKETS; ++bucket) {
-#ifndef AUTOVEC
-        for (int i = 0; i < L1_SIZE / L1_CHUNK_PER_32; ++i)
+#if !defined(AUTOVEC) || defined(TARNISHED_TARGET_NEON)
+#if defined(TARNISHED_TARGET_NEON)
+        constexpr int targetL1ChunkPer32 = 4;
+#else
+        constexpr int targetL1ChunkPer32 = L1_CHUNK_PER_32;
+#endif
+        for (int i = 0; i < L1_SIZE / targetL1ChunkPer32; ++i)
             for (int j = 0; j < L2_SIZE; ++j)
-                for (int k = 0; k < L1_CHUNK_PER_32; ++k)
-                    net.L1Weights[bucket][  i * L1_CHUNK_PER_32 * L2_SIZE
-                                          + j * L1_CHUNK_PER_32
-                                          + k] = quantisedNet.L1Weights[i * L1_CHUNK_PER_32 + k][bucket][j];
+                for (int k = 0; k < targetL1ChunkPer32; ++k)
+                    net.L1Weights[bucket][  i * targetL1ChunkPer32 * L2_SIZE
+                                          + j * targetL1ChunkPer32
+                                          + k] = quantisedNet.L1Weights[i * targetL1ChunkPer32 + k][bucket][j];
 #else
         for (int i = 0; i < L1_SIZE; ++i)
             for (int j = 0; j < L2_SIZE; ++j)
