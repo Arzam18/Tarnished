@@ -28,8 +28,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install dependencies
+        shell: bash
         run: |
+          set -e
+
           sudo apt-get update
+
           sudo apt-get install -y \
             g++ \
             curl \
@@ -91,64 +95,38 @@ jobs:
           echo "$SDK/platform-tools" >> "$GITHUB_PATH"
           echo "$SDK/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
 
-      - name: Verify NDK
+      - name: Set Android compiler
         shell: bash
         run: |
           set -e
 
           CXX="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang++"
 
-          echo "Using compiler:"
+          test -x "$CXX"
+
+          echo "ANDROID_CXX=$CXX" >> "$GITHUB_ENV"
+
+          echo "Android compiler:"
           "$CXX" --version
 
-      - name: Download sse2neon
-        run: |
-          curl -L \
-            https://github.com/DLTcollab/sse2neon/raw/master/sse2neon.h \
-            -o sse2neon.h
-
-          test -s sse2neon.h
-
-      - name: Patch SSE include
+      - name: Download NNUE network
         shell: bash
         run: |
           set -e
 
-          while IFS= read -r file; do
-            [ -z "$file" ] && continue
-
-            python3 - "$file" <<'PY'
-            import sys
-            from pathlib import Path
-
-            path = Path(sys.argv[1])
-            text = path.read_text()
-
-            old = "#include <immintrin.h>"
-
-            new = """#if defined(__aarch64__) || defined(__ARM_NEON)
-            #include "../sse2neon.h"
-            #else
-            #include <immintrin.h>
-            #endif"""
-
-            if old in text:
-                path.write_text(text.replace(old, new))
-                print("Patched:", path)
-            PY
-
-          done < <(
-            grep -RIl \
-              '#include <immintrin.h>' \
-              src preprocess \
-              2>/dev/null || true
-          )
-
-      - name: Download NNUE network
-        run: |
           make download-net
 
-      - name: Build permutation tool
+          echo "Network:"
+          cat network.txt
+
+          NET="$(cat network.txt).bin"
+
+          test -f "$NET"
+          test -s "$NET"
+
+          ls -lh "$NET"
+
+      - name: Build NEON network permutation tool
         shell: bash
         run: |
           set -e
@@ -156,46 +134,74 @@ jobs:
           g++ \
             -O3 \
             -std=c++20 \
+            -DNDEBUG \
+            -DTARNISHED_TARGET_NEON \
             -I. \
-            -I./src \
+            -Isrc \
             preprocess/permute.cpp \
             src/parameters.cpp \
-            -o preprocess/permute
+            -o preprocess/permute-neon
 
-          test -x preprocess/permute
+          test -x preprocess/permute-neon
 
-      - name: Generate processed network
+          echo "Permutation tool:"
+          file preprocess/permute-neon
+
+      - name: Generate NEON processed network
         shell: bash
         run: |
           set -e
 
-          ./preprocess/permute
+          NET="$(cat network.txt).bin"
 
-          echo "Generated network files:"
+          test -f "$NET"
 
-          find . -maxdepth 3 -type f \
-            \( -name "*.bin" -o -name "*.nnue" \) \
-            -printf '%p %s bytes\n' \
-            | sort
+          echo "Input network:"
+          echo "$NET"
+
+          echo "Generating processed.bin..."
+
+          ./preprocess/permute-neon \
+            "$NET" \
+            processed.bin
+
+          test -f processed.bin
+          test -s processed.bin
+
+          echo
+          echo "Processed network:"
+          ls -lh processed.bin
 
       - name: Build Tarnished Android ARM64
         shell: bash
         run: |
           set -e
 
-          CXX="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang++"
+          echo "Building Tarnished for Android ARM64..."
 
-          echo "Building with:"
-          echo "$CXX"
+          echo "Compiler:"
+          echo "$ANDROID_CXX"
 
-          make native \
-            CXX="$CXX" \
-            ARCH="-march=armv8-a" \
-            LDFLAGS="-static-libstdc++" \
-            EXE="tarnished-android-arm64"
+          "$ANDROID_CXX" \
+            -O3 \
+            -march=armv8-a \
+            -fno-finite-math-only \
+            -funroll-loops \
+            -flto \
+            -fuse-ld=lld \
+            -std=c++20 \
+            -DNDEBUG \
+            -pthread \
+            -DEVALFILE=\"processed.bin\" \
+            src/*.cpp \
+            src/external/format.cpp \
+            -o tarnished-android-arm64
 
           test -f tarnished-android-arm64
+          test -s tarnished-android-arm64
 
+          echo
+          echo "Android ARM64 binary:"
           ls -lh tarnished-android-arm64
 
       - name: Verify ARM64 binary
@@ -203,32 +209,39 @@ jobs:
         run: |
           set -e
 
-          echo "File:"
+          echo "===== file ====="
           file tarnished-android-arm64
 
           echo
-          echo "ELF header:"
+          echo "===== ELF header ====="
           readelf -h tarnished-android-arm64
 
           echo
-          echo "Interpreter:"
+          echo "===== ELF machine ====="
+
+          MACHINE="$(readelf -h tarnished-android-arm64 | grep 'Machine:')"
+
+          echo "$MACHINE"
+
+          echo "$MACHINE" | grep -qi 'AArch64'
+
+          echo
+          echo "===== ELF class ====="
+
+          CLASS="$(readelf -h tarnished-android-arm64 | grep 'Class:')"
+
+          echo "$CLASS"
+
+          echo "$CLASS" | grep -q 'ELF64'
+
+          echo
+          echo "===== Program interpreter ====="
+
           readelf -l tarnished-android-arm64 \
             | grep -i interpreter || true
 
           echo
-          echo "Checking AArch64:"
-
-          file tarnished-android-arm64 \
-            | grep -Eiq 'aarch64|ARM aarch64|ARM64'
-
-          echo
-          echo "Checking ELF64:"
-
-          readelf -h tarnished-android-arm64 \
-            | grep -q 'ELF64'
-
-          echo
-          echo "SUCCESS: Android ARM64 binary verified."
+          echo "SUCCESS: Android ARM64 ELF64 binary created."
 
       - name: Upload Android ARM64 binary
         uses: actions/upload-artifact@v4
