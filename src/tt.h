@@ -1,303 +1,225 @@
 #pragma once
 
-#include "external/chess.hpp"
-#include "eval.h"
-#include "parameters.h"
-#include "util.h"
 #include <bitset>
 #include <climits>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <thread>
 #include <vector>
-#if defined(__linux__)
-    #include <sys/mman.h>
-#endif
+#include <atomic>
+#include <algorithm>
+#include <cstddef>
+#include <sys/mman.h>
 
+#include "move.h"
+#include "board.h"
+
+constexpr size_t TT_ALIGNMENT = 64;
 
 inline void* alignedAlloc(size_t alignment, size_t requiredBytes) {
-    void* ptr;
+    void* ptr = nullptr;
+
 #if defined(__MINGW32__)
-    int offset = alignment - 1;
-    void* p = (void*)malloc(requiredBytes + offset);
-    ptr = (void*)(((size_t)(p)+offset) & ~(alignment - 1));
-#elif defined (__GNUC__)
+
+    const size_t offset = alignment - 1;
+    void* p = std::malloc(requiredBytes + offset);
+
+    if (p != nullptr) {
+        ptr = reinterpret_cast<void*>(
+            (reinterpret_cast<size_t>(p) + offset) & ~(alignment - 1)
+        );
+    }
+
+#elif defined(__ANDROID__) || defined(__linux__)
+
+    // Android/bionic and libc++ do not reliably expose
+    // std::aligned_alloc. POSIX aligned allocation works on
+    // Android and guarantees the requested alignment.
+    if (posix_memalign(&ptr, alignment, requiredBytes) != 0)
+        ptr = nullptr;
+
+#elif defined(__GNUC__)
+
     ptr = std::aligned_alloc(alignment, requiredBytes);
+
 #else
+
 #error "Compiler not supported"
+
 #endif
 
 #if defined(__linux__)
-    madvise(ptr, requiredBytes, MADV_HUGEPAGE);
-#endif 
+    if (ptr != nullptr)
+        madvise(ptr, requiredBytes, MADV_HUGEPAGE);
+#endif
 
     return ptr;
 }
 
+class TranspositionTable {
+   private:
+    struct TTCluster {
+        static constexpr int ClusterSize = 3;
 
-using namespace chess;
-
-enum TTFlag : uint8_t { NO_BOUND = 0, EXACT = 1, BETA_CUT = 2, FAIL_LOW = 3 };
-
-// Heavily based off Stormphrax and Sirius
-
-constexpr int ENTRY_COUNT = 3;
-constexpr size_t TT_ALIGNMENT = 64;
-static constexpr int GEN_CYCLE_LENGTH = 1 << 5;
-static constexpr uint32_t AGE_MASK = GEN_CYCLE_LENGTH - 1;
-
-inline int storeScore(int score, int ply) {
-    if (std::abs(score) >= FOUND_MATE)
-        score += score < 0 ? -ply : ply;
-    return score;
-}
-
-inline int readScore(int score, int ply) {
-    if (std::abs(score) >= FOUND_MATE)
-        score += score < 0 ? ply : -ply;
-    return score;
-}
-
-struct TTEntry {
-    uint16_t key16;
-    int16_t score;
-    int16_t staticEval;
-    uint16_t bestMove;
-    uint8_t depth;
-    uint8_t flags;
-
-    bool pv() {
-        return (flags >> 2) & 1;
-    }
-
-    uint8_t gen() {
-        return flags >> 3;
-    }
-
-    uint8_t bound() {
-        return flags & 3;
-    }
-
-    void setFlag(bool pv, uint32_t gen, uint8_t bound) {
-        flags = static_cast<uint32_t>(bound)
-              | (static_cast<uint32_t>(pv) << 2)
-              | (gen << 3);
-    }
-};
-
-struct ProbedTTEntry {
-    int score;
-    int staticEval;
-    uint16_t move;
-    int depth;
-    bool pv;
-    uint8_t bound;
-};
-
-struct alignas(32) TTCluster {
-    TTEntry entries[ENTRY_COUNT];
-    char padding[2];
-};
-
-class TTable {
-
-public:
-    int mbSize = 16;
-
-    TTable() {
-        resize(16);
-    }
-
-    ~TTable() {
-        std::free(clusters);
-    }
-
-    void resize(int mb = 16) {
-        mbSize = mb;
-
-        size_t clusterCount =
-            static_cast<uint64_t>(mb) * 1024 * 1024 / sizeof(TTCluster);
-
-        if (clusterCount == size)
-            return;
-
-        std::free(clusters);
-
-        size = clusterCount;
-
-        clusters = static_cast<TTCluster*>(
-            alignedAlloc(
-                TT_ALIGNMENT,
-                size * sizeof(TTCluster)
-            )
-        );
-
-        currAge = 0;
-    }
-
-    void prefetch(uint64_t key) {
-        __builtin_prefetch(&clusters[index(key)]);
-    }
-
-    bool probe(uint64_t key, int ply, ProbedTTEntry& ttData) {
-        size_t idx = index(key);
-        TTCluster& cluster = clusters[idx];
-
-        int entryIdx = -1;
-        uint16_t key16 = static_cast<uint16_t>(key);
-
-        for (int i = 0; i < ENTRY_COUNT; i++) {
-            if (cluster.entries[i].key16 == key16) {
-                entryIdx = i;
-                break;
-            }
-        }
-
-        if (entryIdx == -1)
-            return false;
-
-        auto entry = cluster.entries[entryIdx];
-
-        ttData.score = readScore(entry.score, ply);
-        ttData.staticEval = entry.staticEval;
-        ttData.move = entry.bestMove;
-        ttData.depth = entry.depth;
-        ttData.bound = entry.bound();
-        ttData.pv = entry.pv();
-
-        return true;
-    }
-
-    void store(
-        uint64_t key,
-        Move move,
-        int score,
-        int staticEval,
-        uint8_t bound,
-        int depth,
-        int ply,
-        bool pv
-    ) {
-        uint16_t key16 = static_cast<uint16_t>(key);
-        TTCluster& cluster = clusters[index(key)];
-
-        auto entryValue = [this](auto& entry) {
-            int32_t relativeAge =
-                (GEN_CYCLE_LENGTH + currAge - entry.gen()) & AGE_MASK;
-
-            return entry.depth - relativeAge * 2;
+        struct TTEntry {
+            uint64_t data;
         };
 
-        TTEntry* entryPtr = nullptr;
-        auto minValue = std::numeric_limits<int32_t>::max();
+        TTEntry entry[ClusterSize];
+    };
 
-        for (auto& candidate : cluster.entries) {
-            if (
-                candidate.key16 == key16
-                || candidate.bound() == TTFlag::NO_BOUND
-            ) {
-                entryPtr = &candidate;
-                break;
-            }
+    TTCluster* table = nullptr;
+    size_t clusterCount = 0;
 
-            auto value = entryValue(candidate);
+    std::atomic<bool> stopClear{false};
+    std::thread clearThread;
 
-            if (value < minValue) {
-                entryPtr = &candidate;
-                minValue = value;
-            }
+   public:
+    TranspositionTable() = default;
+
+    ~TranspositionTable() {
+        stopClear.store(true, std::memory_order_relaxed);
+
+        if (clearThread.joinable())
+            clearThread.join();
+
+        if (table != nullptr)
+            std::free(table);
+    }
+
+    TranspositionTable(const TranspositionTable&) = delete;
+    TranspositionTable& operator=(const TranspositionTable&) = delete;
+
+    void resize(size_t mb) {
+        if (table != nullptr) {
+            std::free(table);
+            table = nullptr;
         }
 
-        auto entry = *entryPtr;
+        const size_t bytes = mb * 1024ULL * 1024ULL;
+        clusterCount = bytes / sizeof(TTCluster);
 
-        if (
-            !(
-                bound == TTFlag::EXACT
-                || key16 != entry.key16
-                || entry.gen() != currAge
-                || depth + 4 + pv * 2 > entry.depth
-            )
-        )
+        if (clusterCount == 0)
             return;
 
-        if (!moveIsNull(move) || key16 != entry.key16)
-            entry.bestMove = move.move();
+        // Keep the number of clusters a power of two so that
+        // TT indexing can use a fast bit mask.
+        size_t power = 1;
 
-        entry.key16 = key16;
-        entry.score = static_cast<int16_t>(
-            storeScore(score, ply)
+        while ((power << 1) <= clusterCount)
+            power <<= 1;
+
+        clusterCount = power;
+
+        const size_t requiredBytes =
+            clusterCount * sizeof(TTCluster);
+
+        table = static_cast<TTCluster*>(
+            alignedAlloc(TT_ALIGNMENT, requiredBytes)
         );
-        entry.staticEval = static_cast<int16_t>(staticEval);
-        entry.depth = static_cast<uint8_t>(depth);
-        entry.setFlag(pv, currAge, bound);
 
-        *entryPtr = entry;
-    }
-
-    void incAge() {
-        currAge = (currAge + 1) % GEN_CYCLE_LENGTH;
-    }
-
-    void clear(int numThreads = 1) {
-        currAge = 0;
-
-        std::vector<std::thread> threads;
-        threads.reserve(numThreads);
-
-        for (int i = 0; i < numThreads; i++) {
-            threads.emplace_back(
-                [i, this, numThreads]() {
-                    auto begin =
-                        clusters + size * i / numThreads;
-
-                    auto end =
-                        clusters + size * (i + 1) / numThreads;
-
-                    std::fill(
-                        begin,
-                        end,
-                        TTCluster{}
-                    );
-                }
-            );
+        if (table == nullptr) {
+            clusterCount = 0;
+            throw std::bad_alloc();
         }
 
-        // std::jthread automatically joins when destroyed.
-        // std::thread does not, so explicitly join every worker.
-        for (auto& thread : threads) {
-            thread.join();
-        }
+        std::memset(table, 0, requiredBytes);
     }
 
-    int hashfull() {
-        int count = 0;
+    void clear() {
+        if (table == nullptr || clusterCount == 0)
+            return;
 
-        for (int i = 0; i < 1000; i++) {
-            for (int j = 0; j < ENTRY_COUNT; j++) {
-                auto& entry = clusters[i].entries[j];
+        const size_t bytes =
+            clusterCount * sizeof(TTCluster);
 
-                if (
-                    entry.bound() != TTFlag::NO_BOUND
-                    && entry.gen() == currAge
-                )
-                    count++;
+        std::memset(table, 0, bytes);
+    }
+
+    void clearAsync() {
+        if (clearThread.joinable())
+            clearThread.join();
+
+        stopClear.store(false, std::memory_order_relaxed);
+
+        clearThread = std::thread([this]() {
+            if (table == nullptr || clusterCount == 0)
+                return;
+
+            const size_t bytes =
+                clusterCount * sizeof(TTCluster);
+
+            constexpr size_t chunkSize = 1ULL << 20;
+
+            char* ptr = reinterpret_cast<char*>(table);
+
+            size_t offset = 0;
+
+            while (offset < bytes) {
+                if (stopClear.load(std::memory_order_relaxed))
+                    return;
+
+                const size_t remaining = bytes - offset;
+                const size_t amount =
+                    std::min(chunkSize, remaining);
+
+                std::memset(ptr + offset, 0, amount);
+
+                offset += amount;
+            }
+        });
+    }
+
+    TTCluster* getCluster(uint64_t key) {
+        if (table == nullptr || clusterCount == 0)
+            return nullptr;
+
+        return &table[key & (clusterCount - 1)];
+    }
+
+    const TTCluster* getCluster(uint64_t key) const {
+        if (table == nullptr || clusterCount == 0)
+            return nullptr;
+
+        return &table[key & (clusterCount - 1)];
+    }
+
+    size_t hashfull() const {
+        if (table == nullptr || clusterCount == 0)
+            return 0;
+
+        size_t used = 0;
+        size_t total = 0;
+
+        // Sample the table rather than scanning the entire TT.
+        constexpr size_t samples = 1000;
+
+        const size_t step =
+            std::max<size_t>(1, clusterCount / samples);
+
+        for (size_t i = 0; i < clusterCount && total < samples; i += step) {
+            const TTCluster& cluster = table[i];
+
+            for (int j = 0; j < TTCluster::ClusterSize; ++j) {
+                if (cluster.entry[j].data != 0)
+                    ++used;
+
+                ++total;
             }
         }
 
-        return count / ENTRY_COUNT;
+        if (total == 0)
+            return 0;
+
+        return (used * 1000) / total;
     }
 
-private:
-    TTCluster* clusters;
-    size_t size;
-    uint32_t currAge;
+    size_t size() const {
+        return clusterCount;
+    }
 
-    uint32_t index(uint64_t key) {
-        return static_cast<std::uint64_t>(
-            (
-                static_cast<u128>(key)
-                * static_cast<u128>(size)
-            ) >> 64
-        );
+    bool empty() const {
+        return table == nullptr || clusterCount == 0;
     }
 };
