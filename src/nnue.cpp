@@ -93,7 +93,7 @@ void NNUE::activateL1(Accumulator& acc, Color col, uint8_t* output) {
 
             const vepi8  product = packus_epi16(mulhi_epi16(slli_epi16(c0a, 16 - FT_SHIFT), c1a), 
                                                     mulhi_epi16(slli_epi16(c0b, 16 - FT_SHIFT), c1b));
-            store_epi16(reinterpret_cast<vepi8*>(&output[i + offset]), product);
+            store_epi8(reinterpret_cast<vepi8*>(&output[i + offset]), product);
         }
         offset += L1_SIZE / 2;
     }
