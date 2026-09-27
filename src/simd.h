@@ -1,7 +1,9 @@
 #pragma once
 #include <cstdint>
 
-#if defined(__aarch64__) || defined(__ARM_NEON)
+#if defined(TARNISHED_FORCE_SCALAR)
+    #define AUTOVEC
+#elif defined(__aarch64__) || defined(__ARM_NEON)
     #include <arm_neon.h>
 
     #define USE_NEON
@@ -12,6 +14,11 @@
     using vepi32 = int32x4_t;
     using vps32  = float32x4_t;
     using v128i  = int32x4_t;
+
+    static_assert(sizeof(vepi8) == 16);
+    static_assert(sizeof(vepi16) == 16);
+    static_assert(sizeof(vepi32) == 16);
+    static_assert(sizeof(vps32) == 16);
 
     inline vepi16 set1_epi16(int16_t v){ return vdupq_n_s16(v); }
     inline vepi16 load_epi16(const vepi16* p){ return vld1q_s16(reinterpret_cast<const int16_t*>(p)); }
