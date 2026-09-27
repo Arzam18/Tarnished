@@ -197,7 +197,7 @@ jobs:
             -DNDEBUG \
             -pthread \
             -static \
-            -DEVALFILE=\"processed-neon.bin\" \
+            -DEVALFILE='"processed-neon.bin"' \
             src/*.cpp \
             src/external/format.cpp \
             -o tarnished-aarch64-neon
@@ -219,7 +219,7 @@ jobs:
             -DTARNISHED_FORCE_SCALAR \
             -pthread \
             -static \
-            -DEVALFILE=\"processed-scalar.bin\" \
+            -DEVALFILE='"processed-scalar.bin"' \
             src/*.cpp \
             src/external/format.cpp \
             -o tarnished-aarch64-scalar
@@ -295,7 +295,7 @@ jobs:
             -DNDEBUG \
             -pthread \
             -static-libstdc++ \
-            -DEVALFILE=\"processed-neon.bin\" \
+            -DEVALFILE='"processed-neon.bin"' \
             src/*.cpp \
             src/external/format.cpp \
             -o tarnished-android-arm64
@@ -310,7 +310,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          "$ANDROID_CXX"             -O3             -fno-finite-math-only             -funroll-loops             -flto             -fuse-ld=lld             -std=c++20             -DNDEBUG             -DTARNISHED_FORCE_SCALAR             -pthread             -static-libstdc++             -DEVALFILE="processed-scalar.bin"             src/*.cpp             src/external/format.cpp             -o tarnished-android-arm64-scalar
+          "$ANDROID_CXX"             -O3             -fno-finite-math-only             -funroll-loops             -flto             -fuse-ld=lld             -std=c++20             -DNDEBUG             -DTARNISHED_FORCE_SCALAR             -pthread             -static-libstdc++             -DEVALFILE='"processed-scalar.bin"'             src/*.cpp             src/external/format.cpp             -o tarnished-android-arm64-scalar
 
           test -s tarnished-android-arm64-scalar
 
