@@ -1,4 +1,4 @@
-name: Tarnished Android ARM64 Build
+name: Tarnished Android ARM64 NEON Build
 
 on:
   push:
@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   android-arm64:
-    name: Build Tarnished for Android ARM64
+    name: Build Tarnished for Android ARM64 NEON
     runs-on: ubuntu-24.04
 
     env:
@@ -27,15 +27,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install build and ARM validation tools
         shell: bash
         run: |
-          set -e
-
+          set -euo pipefail
           sudo apt-get update
-
           sudo apt-get install -y \
             g++ \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            qemu-user-static \
             curl \
             unzip \
             file \
@@ -44,51 +45,37 @@ jobs:
       - name: Install Android NDK
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           SDK="$HOME/android-sdk"
-
-          mkdir -p "$SDK/cmdline-tools"
+          mkdir -p "$SDK/cmdline-tools/latest"
 
           curl -L \
             -o /tmp/cmdline-tools.zip \
             https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
 
+          unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
+
           rm -rf "$SDK/cmdline-tools/latest"
-
           mkdir -p "$SDK/cmdline-tools/latest"
-
-          unzip -q \
-            /tmp/cmdline-tools.zip \
-            -d "$SDK/cmdline-tools/latest"
-
-          mv \
-            "$SDK/cmdline-tools/latest/cmdline-tools/"* \
-            "$SDK/cmdline-tools/latest/"
-
-          rm -rf "$SDK/cmdline-tools/latest/cmdline-tools"
+          mv /tmp/cmdline-tools/cmdline-tools/* "$SDK/cmdline-tools/latest/"
 
           export ANDROID_HOME="$SDK"
+          export ANDROID_SDK_ROOT="$SDK"
           export PATH="$SDK/cmdline-tools/latest/bin:$SDK/platform-tools:$PATH"
 
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
 
-          set +o pipefail
-
           yes | sdkmanager \
             "platform-tools" \
             "platforms;android-${ANDROID_API}" \
-            "ndk;${NDK_VERSION}"
-
-          STATUS=${PIPESTATUS[1]}
-
-          set -o pipefail
-
-          if [ "$STATUS" -ne 0 ]; then
-            exit "$STATUS"
-          fi
+            "ndk;${NDK_VERSION}" >/tmp/sdkmanager.log 2>&1 || {
+              cat /tmp/sdkmanager.log
+              exit 1
+            }
 
           echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$SDK/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
 
           echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
@@ -98,38 +85,33 @@ jobs:
       - name: Set Android compiler
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           CXX="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${ANDROID_API}-clang++"
-
           test -x "$CXX"
 
           echo "ANDROID_CXX=$CXX" >> "$GITHUB_ENV"
-
-          echo "Android compiler:"
           "$CXX" --version
 
       - name: Download NNUE network
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           make download-net
 
-          echo "Network:"
-          cat network.txt
-
           NET="$(cat network.txt).bin"
-
-          test -f "$NET"
           test -s "$NET"
 
+          echo "Network: $NET"
           ls -lh "$NET"
 
+      # The raw network is stored in the training layout. The runtime needs
+      # different L1 layouts depending on the SIMD implementation.
       - name: Build NEON network permutation tool
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           g++ \
             -O3 \
@@ -144,40 +126,149 @@ jobs:
 
           test -x preprocess/permute-neon
 
-          echo "Permutation tool:"
-          file preprocess/permute-neon
-
-      - name: Generate NEON processed network
+      - name: Build scalar network permutation tool
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
+
+          g++ \
+            -O3 \
+            -std=c++20 \
+            -DNDEBUG \
+            -DTARNISHED_FORCE_SCALAR \
+            -I. \
+            -Isrc \
+            preprocess/permute.cpp \
+            src/parameters.cpp \
+            -o preprocess/permute-scalar
+
+          test -x preprocess/permute-scalar
+
+      - name: Generate NEON and scalar networks
+        shell: bash
+        run: |
+          set -euo pipefail
 
           NET="$(cat network.txt).bin"
+          test -s "$NET"
 
-          test -f "$NET"
+          ./preprocess/permute-neon "$NET" processed-neon.bin
+          ./preprocess/permute-scalar "$NET" processed-scalar.bin
 
-          echo "Input network:"
-          echo "$NET"
+          test -s processed-neon.bin
+          test -s processed-scalar.bin
 
-          echo "Generating processed.bin..."
+          echo "NEON processed network:"
+          ls -lh processed-neon.bin
 
-          ./preprocess/permute-neon \
-            "$NET" \
-            processed.bin
+          echo "Scalar processed network:"
+          ls -lh processed-scalar.bin
 
-          test -f processed.bin
-          test -s processed.bin
+          # Both runtime layouts contain exactly the same amount of network
+          # data. Different contents are expected because L1 is transposed
+          # differently for SIMD versus scalar inference.
+          test "$(stat -c%s processed-neon.bin)" = "$(stat -c%s processed-scalar.bin)"
 
-          echo
-          echo "Processed network:"
-          ls -lh processed.bin
-
-      - name: Build Tarnished Android ARM64
+      - name: Build AArch64 NEON validation binary
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
-          echo "Building Tarnished for Android ARM64..."
+          aarch64-linux-gnu-g++ \
+            -O3 \
+            -march=armv8-a \
+            -fno-finite-math-only \
+            -funroll-loops \
+            -std=c++20 \
+            -DNDEBUG \
+            -pthread \
+            -static \
+            -DEVALFILE=\"processed-neon.bin\" \
+            src/*.cpp \
+            src/external/format.cpp \
+            -o tarnished-aarch64-neon
+
+          test -s tarnished-aarch64-neon
+          file tarnished-aarch64-neon
+
+      - name: Build AArch64 scalar validation binary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          aarch64-linux-gnu-g++ \
+            -O3 \
+            -fno-finite-math-only \
+            -funroll-loops \
+            -std=c++20 \
+            -DNDEBUG \
+            -DTARNISHED_FORCE_SCALAR \
+            -pthread \
+            -static \
+            -DEVALFILE=\"processed-scalar.bin\" \
+            src/*.cpp \
+            src/external/format.cpp \
+            -o tarnished-aarch64-scalar
+
+          test -s tarnished-aarch64-scalar
+          file tarnished-aarch64-scalar
+
+      - name: Validate NEON NNUE against scalar NNUE on AArch64
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FENS=(
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+            "r3k2r/2pb1ppp/2pp1q2/p7/1nP1B3/1P2P3/P2N1PPP/R2QK2R w KQkq a6 0 14"
+            "4rrk1/2p1b1p1/p1p3q1/4p3/2P2n1p/1P1NR2P/PB3PP1/3R1QK1 b - - 2 24"
+            "r3qbrk/6p1/2b2pPp/p3pP1Q/PpPpP2P/3P1B2/2PB3K/R5R1 w - - 16 42"
+            "6k1/1R3p2/6p1/2Bp3p/3P2q1/P7/1P2rQ1K/5R2 b - - 4 44"
+            "r1bqk2r/pppp1ppp/5n2/4b3/4P3/P1N5/1PP2PPP/R1BQKB1R w KQkq - 0 5"
+            "r1bq1rk1/pp2b1pp/n1pp1n2/3P1p2/2P1P2N/PP2BPPP/R1BQ1RK1 b - - 2 10"
+            "2r2k2/8/4P1R1/1p6/8/P4K1N/7b/2B5 b - - 0 55"
+          )
+
+          extract_raw() {
+            grep '^Raw:' "$1" | tail -1 | awk '{print $2}'
+          }
+
+          for fen in "${FENS[@]}"; do
+            printf 'position fen %s\neval\nquit\n' "$fen" \
+              | qemu-aarch64-static ./tarnished-aarch64-neon > neon.txt 2>&1
+
+            printf 'position fen %s\neval\nquit\n' "$fen" \
+              | qemu-aarch64-static ./tarnished-aarch64-scalar > scalar.txt 2>&1
+
+            NEON="$(extract_raw neon.txt)"
+            SCALAR="$(extract_raw scalar.txt)"
+
+            test -n "$NEON"
+            test -n "$SCALAR"
+
+            DIFF=$((NEON - SCALAR))
+            ABS=${DIFF#-}
+
+            echo "FEN: $fen"
+            echo "  NEON  = $NEON"
+            echo "  scalar= $SCALAR"
+            echo "  diff  = $DIFF"
+
+            # SIMD floating-point accumulation can differ slightly because
+            # NEON uses FMA/vector reduction. A large difference indicates a
+            # layout/intrinsic/NNUE bug rather than normal FP reordering.
+            if [ "$ABS" -gt 4 ]; then
+              echo "ERROR: NEON NNUE differs too much from scalar NNUE."
+              exit 1
+            fi
+          done
+
+          echo "NEON NNUE validation passed."
+
+      - name: Build Tarnished Android ARM64 NEON
+        shell: bash
+        run: |
+          set -euo pipefail
 
           "$ANDROID_CXX" \
             -O3 \
@@ -190,43 +281,30 @@ jobs:
             -DNDEBUG \
             -pthread \
             -static-libstdc++ \
-            -DEVALFILE=\"processed.bin\" \
+            -DEVALFILE=\"processed-neon.bin\" \
             src/*.cpp \
             src/external/format.cpp \
             -o tarnished-android-arm64
 
-          test -f tarnished-android-arm64
           test -s tarnished-android-arm64
 
-          echo
           echo "Android ARM64 binary:"
           ls -lh tarnished-android-arm64
 
       - name: Verify Android ARM64 binary
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           echo "===== FILE ====="
           file tarnished-android-arm64
 
           echo
           echo "===== ELF HEADER ====="
-          readelf -h tarnished-android-arm64
+          readelf -h tarnished-android-arm64 | grep -E 'Class:|Machine:'
 
-          echo
-          echo "===== ELF MACHINE ====="
-          MACHINE="$(readelf -h tarnished-android-arm64 | grep 'Machine:')"
-          echo "$MACHINE"
-
-          echo "$MACHINE" | grep -qi 'AArch64'
-
-          echo
-          echo "===== ELF CLASS ====="
-          CLASS="$(readelf -h tarnished-android-arm64 | grep 'Class:')"
-          echo "$CLASS"
-
-          echo "$CLASS" | grep -q 'ELF64'
+          readelf -h tarnished-android-arm64 | grep -q 'AArch64'
+          readelf -h tarnished-android-arm64 | grep -q 'ELF64'
 
           echo
           echo "===== REQUIRED SHARED LIBRARIES ====="
@@ -246,18 +324,11 @@ jobs:
           fi
 
           echo
-          echo "===== PROGRAM INTERPRETER ====="
-
-          readelf -l tarnished-android-arm64 \
-            | grep -i interpreter || true
-
-          echo
-          echo "SUCCESS:"
-          echo "ARM64 Android binary built with static libc++ runtime."
+          echo "Android ARM64 NEON build passed."
 
       - name: Upload Android ARM64 binary
         uses: actions/upload-artifact@v4
         with:
-          name: tarnished-android-arm64
+          name: tarnished-android-arm64-neon
           path: tarnished-android-arm64
           if-no-files-found: error
