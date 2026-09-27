@@ -101,15 +101,21 @@
         return vcombine_s16(vqmovn_s32(sumLo), vqmovn_s32(sumHi));
     }
 
-    inline vepi32 dpbusdx2_epi32(const vepi32 sum, const vepi8 vec0, const vepi8 vec1,
-                                 const vepi8 vec2, const vepi8 vec3) {
-        const vepi16 product16a = maddubs_epi16(vec0, vec1);
-        const vepi16 product16b = maddubs_epi16(vec2, vec3);
+    // The NNUE input packs four unsigned bytes into each 32-bit value and
+    // replicates that value across the NEON register. Reinterpret those bits
+    // as bytes before applying the PMADDUBSW-equivalent operation.
+    inline vepi32 dpbusdx2_epi32(const vepi32 sum, const vepi32 vec0, const vepi8 vec1,
+                                 const vepi32 vec2, const vepi8 vec3) {
+        const vepi8 bytes0 = vreinterpretq_s8_s32(vec0);
+        const vepi8 bytes2 = vreinterpretq_s8_s32(vec2);
+        const vepi16 product16a = maddubs_epi16(bytes0, vec1);
+        const vepi16 product16b = maddubs_epi16(bytes2, vec3);
         return add_epi32(sum, madd_epi16(add_epi16(product16a, product16b), set1_epi16(1)));
     }
 
-    inline vepi32 dpbusd_epi32(const vepi32 sum, const vepi8 vec0, const vepi8 vec1) {
-        const vepi16 product16 = maddubs_epi16(vec0, vec1);
+    inline vepi32 dpbusd_epi32(const vepi32 sum, const vepi32 vec0, const vepi8 vec1) {
+        const vepi8 bytes0 = vreinterpretq_s8_s32(vec0);
+        const vepi16 product16 = maddubs_epi16(bytes0, vec1);
         return add_epi32(sum, madd_epi16(product16, set1_epi16(1)));
     }
 
