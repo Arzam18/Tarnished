@@ -3,6 +3,7 @@
 #include "parameters.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <fstream>
 #include <random>
 
@@ -342,6 +343,30 @@ void Accumulator::refresh(Board& board, Color persp) {
             accPerspective[i] += permutedNet->FTWeights[feature * L1_SIZE + i];
         }
     }
+}
+
+bool Accumulator::verifyFullRefresh(Board& board, Color persp, int& mismatchIndex,
+                                      int16_t& currentValue, int16_t& referenceValue) {
+    // Build a completely independent accumulator from the current board.
+    // This deliberately bypasses both lazy deltas and the Finny/input cache.
+    Accumulator reference{};
+    reference.refresh(board, persp);
+
+    const auto& current = persp == Color::WHITE ? white : black;
+    const auto& rebuilt = persp == Color::WHITE ? reference.white : reference.black;
+
+    for (int i = 0; i < L1_SIZE; ++i) {
+        if (current[i] != rebuilt[i]) {
+            mismatchIndex = i;
+            currentValue = current[i];
+            referenceValue = rebuilt[i];
+            return false;
+        }
+    }
+
+    mismatchIndex = -1;
+    currentValue = referenceValue = 0;
+    return true;
 }
 
 // Refresh with cache

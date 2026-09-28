@@ -7,6 +7,7 @@
 #include "util.h"
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <random>
 
 
@@ -239,6 +240,32 @@ namespace Search {
                 }
             }
 
+        }
+
+        // Optional accumulator correctness diagnostic.
+        // It is deliberately runtime-gated so normal tournament/search builds
+        // are completely unchanged. Set TARNISHED_NNUE_VERIFY=1 to enable it.
+        // The first 128 evaluations are checked to keep the diagnostic bounded.
+        if (std::getenv("TARNISHED_NNUE_VERIFY")) {
+            static int verifyCount = 0;
+            if (verifyCount < 128) {
+                ++verifyCount;
+                for (Color persp : {Color::WHITE, Color::BLACK}) {
+                    int mismatchIndex;
+                    int16_t currentValue;
+                    int16_t referenceValue;
+                    const bool ok = ss->accumulator->verifyFullRefresh(
+                        board, persp, mismatchIndex, currentValue, referenceValue);
+                    if (!ok) {
+                        std::cerr << "NNUE ACCUMULATOR MISMATCH "
+                                  << (persp == Color::WHITE ? "WHITE" : "BLACK")
+                                  << " index=" << mismatchIndex
+                                  << " current=" << currentValue
+                                  << " full=" << referenceValue
+                                  << " fen=\"" << board.getFen() << "\"\n";
+                    }
+                }
+            }
         }
 
         int eval = network.inference(board, *ss->accumulator);

@@ -115,6 +115,13 @@ struct Accumulator {
         void refresh(Board& board, Color persp, InputBucketCache& bucketCache);
 
         void applyDelta(Color persp, Accumulator& prev);
+
+        // Diagnostic: rebuild one perspective from the board and compare it
+        // with the current lazy/cache accumulator. This is enabled at runtime
+        // with TARNISHED_NNUE_VERIFY=1 and does not affect normal builds.
+        bool verifyFullRefresh(Board& board, Color persp, int& mismatchIndex,
+                               int16_t& currentValue, int16_t& referenceValue);
+
         void addSubDelta(Color persp, int addF, int subF);
         void addSubSubDelta(Color persp, int addF, int subF1, int subF2);
         void addAddSubSubDelta(Color persp, int addF1, int addF2, int subF1, int subF2);
