@@ -195,6 +195,7 @@ jobs:
             -funroll-loops \
             -std=c++20 \
             -DNDEBUG \
+            -DTARNISHED_NNUE_STAGE_VERIFY \
             -pthread \
             -static \
             -DEVALFILE='"processed-neon.bin"' \
@@ -293,6 +294,7 @@ jobs:
             -fuse-ld=lld \
             -std=c++20 \
             -DNDEBUG \
+            -DTARNISHED_NNUE_STAGE_VERIFY \
             -pthread \
             -static-libstdc++ \
             -DEVALFILE='"processed-neon.bin"' \
