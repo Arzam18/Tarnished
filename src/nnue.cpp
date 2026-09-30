@@ -3,6 +3,8 @@
 #include "parameters.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <random>
 
@@ -224,6 +226,77 @@ void NNUE::forwardL3(const float* inputs, const float* weights, const float bias
 #endif
 }
 
+#if defined(TARNISHED_NNUE_STAGE_VERIFY) && !defined(AUTOVEC)
+namespace {
+
+void verifyNNUEStages(const uint8_t* neonFT, const float* neonL1,
+                      const std::array<int16_t, L1_SIZE>& stm,
+                      const std::array<int16_t, L1_SIZE>& opp,
+                      const int8_t* weights, const float* biases) {
+    static int checks = 0;
+    if (checks++ >= 32)
+        return;
+
+    uint8_t scalarFT[L1_SIZE];
+    for (int i = 0; i < L1_SIZE / 2; ++i) {
+        int16_t c0 = std::clamp<int16_t>(stm[i], 0, QA);
+        int16_t c1 = std::clamp<int16_t>(stm[i + L1_SIZE / 2], 0, QA);
+        scalarFT[i] = static_cast<uint8_t>(c0 * c1 >> FT_SHIFT);
+
+        c0 = std::clamp<int16_t>(opp[i], 0, QA);
+        c1 = std::clamp<int16_t>(opp[i + L1_SIZE / 2], 0, QA);
+        scalarFT[i + L1_SIZE / 2] = static_cast<uint8_t>(c0 * c1 >> FT_SHIFT);
+    }
+
+    for (int i = 0; i < L1_SIZE; ++i) {
+        if (neonFT[i] != scalarFT[i]) {
+            std::cerr << "NNUE VERIFY: activateL1 mismatch at " << i
+                      << " neon=" << int(neonFT[i])
+                      << " scalar=" << int(scalarFT[i]) << std::endl;
+            std::abort();
+        }
+    }
+
+    int sums[L2_SIZE] = {};
+    // NEON's Android network is packed as four input features per 32-bit
+    // group, then four weights per output. Reconstruct that exact layout
+    // with scalar arithmetic so the SIMD dot-product can be checked directly.
+    constexpr int chunk = 4;
+    for (int group = 0; group < L1_SIZE / chunk; ++group) {
+        const int inputBase = group * chunk;
+        const int weightBase = group * chunk * L2_SIZE;
+        for (int out = 0; out < L2_SIZE; ++out) {
+            int sum = 0;
+            for (int k = 0; k < chunk; ++k)
+                sum += int(scalarFT[inputBase + k]) * int(weights[weightBase + out * chunk + k]);
+            sums[out] += sum;
+        }
+    }
+
+    float scalarL1[L2_SIZE * 2];
+    for (int i = 0; i < L2_SIZE; ++i) {
+        const float z = float(sums[i]) * L1_MUL + biases[i];
+        scalarL1[i] = std::clamp(z, 0.0f, 1.0f);
+        scalarL1[i + L2_SIZE] = std::clamp(z * z, 0.0f, 1.0f);
+    }
+
+    for (int i = 0; i < L2_SIZE * 2; ++i) {
+        if (std::fabs(neonL1[i] - scalarL1[i]) > 1.0e-5f) {
+            std::cerr << "NNUE VERIFY: forwardL1 mismatch at " << i
+                      << " neon=" << neonL1[i]
+                      << " scalar=" << scalarL1[i]
+                      << " diff=" << std::fabs(neonL1[i] - scalarL1[i]) << std::endl;
+            std::abort();
+        }
+    }
+
+    if (checks == 1)
+        std::cerr << "NNUE VERIFY: activateL1 + forwardL1 passed" << std::endl;
+}
+
+} // namespace
+#endif
+
 int NNUE::inference(Board& board, Accumulator& accumulator) {
 
     Color stm = board.sideToMove();
@@ -235,6 +308,14 @@ int NNUE::inference(Board& board, Accumulator& accumulator) {
 
     activateL1(accumulator, stm, FTOutputs);
     forwardL1(FTOutputs, permutedNet->L1Weights[outputBucket], permutedNet->L1Biases[outputBucket], L1Outputs);
+
+#if defined(TARNISHED_NNUE_STAGE_VERIFY) && !defined(AUTOVEC)
+    const auto& verifyStm = stm == Color::WHITE ? accumulator.white : accumulator.black;
+    const auto& verifyOpp = stm == Color::BLACK ? accumulator.white : accumulator.black;
+    verifyNNUEStages(FTOutputs, L1Outputs, verifyStm, verifyOpp,
+                     permutedNet->L1Weights[outputBucket], permutedNet->L1Biases[outputBucket]);
+#endif
+
     forwardL2(L1Outputs, permutedNet->L2Weights[outputBucket], permutedNet->L2Biases[outputBucket], L2Outputs);
     forwardL3(L2Outputs, permutedNet->L3Weights[outputBucket], permutedNet->L3Biases[outputBucket], output);
     return output * NNUE_SCALE;
