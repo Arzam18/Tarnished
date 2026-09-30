@@ -9,14 +9,6 @@
 #include <array>
 #include <random>
 
-// ============================================================
-// ACCUMULATOR EXPERIMENT
-// Force a complete NNUE accumulator rebuild on every evaluation.
-// This intentionally bypasses incremental deltas, lazy propagation,
-// and the Finny/input bucket cache. Search, SIMD and evaluation
-// parameters remain otherwise unchanged.
-// ============================================================
-#define TARNISHED_FORCE_FULL_NNUE_REFRESH 1
 
 using namespace chess;
 
@@ -224,19 +216,6 @@ namespace Search {
                             MAT_SCALE_BISHOP() * board.pieces(PieceType::BISHOP).count() + MAT_SCALE_ROOK() * board.pieces(PieceType::ROOK).count() + 
                             MAT_SCALE_QUEEN() * board.pieces(PieceType::QUEEN).count();
 
-#if TARNISHED_FORCE_FULL_NNUE_REFRESH
-        // EXPERIMENT: rebuild both perspectives directly from the current
-        // board. This is the reference path and deliberately bypasses:
-        //   * incremental feature deltas
-        //   * lazy accumulator propagation through the search stack
-        //   * the Finny/input bucket cache
-        //
-        // If playing strength returns with this build, the normal
-        // accumulator/update path is implicated. If strength remains low,
-        // the accumulator mechanism is unlikely to be the primary cause.
-        ss->accumulator->refresh(board, Color::WHITE);
-        ss->accumulator->refresh(board, Color::BLACK);
-#else
         // Apply lazy updates
         for (Color persp : {Color::WHITE, Color::BLACK}) {
             if (ss->accumulator->computed[int(persp)])
@@ -261,7 +240,6 @@ namespace Search {
             }
 
         }
-#endif
 
         int eval = network.inference(board, *ss->accumulator);
 
@@ -682,7 +660,7 @@ namespace Search {
 
             int newDepth = depth - 1 + extension;
             // Late Move Reduction
-            if (false && depth >= 3 && moveCount > 2 + root) {
+            if (depth >= 3 && moveCount > 2 + root) {
                 int reduction = baseLMR;
 
                 // Factorized "inference"

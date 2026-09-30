@@ -3,7 +3,6 @@
 #include "parameters.h"
 
 #include <algorithm>
-#include <cstdlib>
 #include <fstream>
 #include <random>
 
@@ -345,102 +344,16 @@ void Accumulator::refresh(Board& board, Color persp) {
     }
 }
 
-bool Accumulator::verifyFullRefresh(Board& board, Color persp, int& mismatchIndex,
-                                      int16_t& currentValue, int16_t& referenceValue) {
-    // Build a completely independent accumulator from the current board.
-    // This deliberately bypasses both lazy deltas and the Finny/input cache.
-    Accumulator reference{};
-    reference.refresh(board, persp);
-
-    const auto& current = persp == Color::WHITE ? white : black;
-    const auto& rebuilt = persp == Color::WHITE ? reference.white : reference.black;
-
-    for (int i = 0; i < L1_SIZE; ++i) {
-        if (current[i] != rebuilt[i]) {
-            mismatchIndex = i;
-            currentValue = current[i];
-            referenceValue = rebuilt[i];
-            return false;
-        }
-    }
-
-    mismatchIndex = -1;
-    currentValue = referenceValue = 0;
-    return true;
-}
-
 // Refresh with cache
 void Accumulator::refresh(Board& board, Color persp, InputBucketCache& bucketCache) {
-    Square kingSq = board.kingSq(persp);
-
-    auto& accPerspective = persp == Color::WHITE ? white : black;
-
-    needsRefresh[int(persp)] = false;
-    computed[int(persp)] = true;
-
-    BucketCacheEntry& cache = bucketCache.cache[int(persp)][kingSq.file() >= File::FILE_E][kingBucket(kingSq, persp)];
-
-    if (!cache.isInit) {
-        cache.features = std::to_array(permutedNet->FTBiases);
-        cache.isInit = true;
-    }
-
-    accPerspective = cache.features;
-
-    int addIndex = 0;
-    int subIndex = 0;
-    std::array<int, 32> adds = {};
-    std::array<int, 32> subs = {};
-
-    for (Color c : {Color::WHITE, Color::BLACK}) {
-        for (PieceType pt : {PieceType::PAWN, PieceType::KNIGHT, PieceType::BISHOP, 
-                        PieceType::ROOK, PieceType::QUEEN, PieceType::KING}) {
-            Bitboard cachedPieces = cache.cachedPieces[int(pt)] & cache.cachedPieces[int(c) + 6];
-            Bitboard added = board.pieces(pt, c) & ~cachedPieces;
-            Bitboard subbed = ~board.pieces(pt, c) & cachedPieces;
-
-            while (added) {
-                Square sq = added.pop();
-                int feature = NNUE::feature(persp, c, pt, sq, kingSq);
-                adds[addIndex] = feature;
-                addIndex++;
-            }
-
-            while (subbed) {
-                Square sq = subbed.pop();
-                int feature = NNUE::feature(persp, c, pt, sq, kingSq);
-                subs[subIndex] = feature;
-                subIndex++;
-            }
-        }
-    }
-    // add in batches of 4
-    while (addIndex >= 4) {
-        refreshAdd4(accPerspective, adds[addIndex - 1], adds[addIndex - 2], adds[addIndex - 3], adds[addIndex - 4]);
-        addIndex -= 4;
-    }
-    // add remaining individually
-    while (addIndex > 0) {
-        for (int i = 0; i < L1_SIZE; i++) {
-            accPerspective[i] += permutedNet->FTWeights[adds[addIndex - 1] * L1_SIZE + i];
-        }
-        addIndex--;
-    }
-    // sub in batches of 4
-    while (subIndex >= 4) {
-        refreshSub4(accPerspective, subs[subIndex - 1], subs[subIndex - 2], subs[subIndex - 3], subs[subIndex - 4]);
-        subIndex -= 4;
-    }
-    // sub remaining individually
-    while (subIndex > 0) {
-        for (int i = 0; i < L1_SIZE; i++) {
-            accPerspective[i] -= permutedNet->FTWeights[subs[subIndex - 1] * L1_SIZE + i];
-        }
-        subIndex--;
-    }
-
-    cache.set(board, accPerspective);
-    
+    // NNUE diagnostic: bypass the Finny/input-bucket cache and rebuild the
+    // accumulator directly from the current board position.
+    //
+    // Search.cpp remains completely unchanged. This isolates the cache from
+    // the accumulator/search experiment while preserving incremental updates
+    // between king-bucket refreshes.
+    (void)bucketCache;
+    refresh(board, persp);
 }
 
 void Accumulator::refresh(Board& board) {
