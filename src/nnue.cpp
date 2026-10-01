@@ -230,13 +230,19 @@ void NNUE::forwardL3(const float* inputs, const float* weights, const float bias
 namespace {
 
 void verifyNNUEStages(const uint8_t* neonFT, const float* neonL1,
+                      const float* neonL2, const float neonL3,
                       const std::array<int16_t, L1_SIZE>& stm,
                       const std::array<int16_t, L1_SIZE>& opp,
-                      const int8_t* weights, const float* biases) {
+                      const int8_t* l1Weights, const float* l1Biases,
+                      const float* l2Weights, const float* l2Biases,
+                      const float* l3Weights, const float l3Bias) {
     static int checks = 0;
     if (checks++ >= 32)
         return;
 
+    // ------------------------------------------------------------
+    // Stage 0: feature transformer activation
+    // ------------------------------------------------------------
     uint8_t scalarFT[L1_SIZE];
     for (int i = 0; i < L1_SIZE / 2; ++i) {
         int16_t c0 = std::clamp<int16_t>(stm[i], 0, QA);
@@ -257,10 +263,11 @@ void verifyNNUEStages(const uint8_t* neonFT, const float* neonL1,
         }
     }
 
+    // ------------------------------------------------------------
+    // Stage 1: NEON packed L1 dot product
+    // Reconstruct the exact packed layout consumed by dpbusd*.
+    // ------------------------------------------------------------
     int sums[L2_SIZE] = {};
-    // NEON's Android network is packed as four input features per 32-bit
-    // group, then four weights per output. Reconstruct that exact layout
-    // with scalar arithmetic so the SIMD dot-product can be checked directly.
     constexpr int chunk = 4;
     for (int group = 0; group < L1_SIZE / chunk; ++group) {
         const int inputBase = group * chunk;
@@ -268,30 +275,80 @@ void verifyNNUEStages(const uint8_t* neonFT, const float* neonL1,
         for (int out = 0; out < L2_SIZE; ++out) {
             int sum = 0;
             for (int k = 0; k < chunk; ++k)
-                sum += int(scalarFT[inputBase + k]) * int(weights[weightBase + out * chunk + k]);
+                sum += int(scalarFT[inputBase + k]) *
+                       int(l1Weights[weightBase + out * chunk + k]);
             sums[out] += sum;
         }
     }
 
     float scalarL1[L2_SIZE * 2];
     for (int i = 0; i < L2_SIZE; ++i) {
-        const float z = float(sums[i]) * L1_MUL + biases[i];
+        const float z = float(sums[i]) * L1_MUL + l1Biases[i];
         scalarL1[i] = std::clamp(z, 0.0f, 1.0f);
         scalarL1[i + L2_SIZE] = std::clamp(z * z, 0.0f, 1.0f);
     }
 
     for (int i = 0; i < L2_SIZE * 2; ++i) {
-        if (std::fabs(neonL1[i] - scalarL1[i]) > 1.0e-5f) {
+        const float diff = std::fabs(neonL1[i] - scalarL1[i]);
+        if (diff > 1.0e-5f) {
             std::cerr << "NNUE VERIFY: forwardL1 mismatch at " << i
                       << " neon=" << neonL1[i]
                       << " scalar=" << scalarL1[i]
-                      << " diff=" << std::fabs(neonL1[i] - scalarL1[i]) << std::endl;
+                      << " diff=" << diff << std::endl;
             std::abort();
         }
     }
 
+    // ------------------------------------------------------------
+    // Stage 2: L2 -> L3
+    // This is deliberately scalar and uses the SAME processed network
+    // supplied to the NEON path. It therefore checks arithmetic, not
+    // network generation.
+    // ------------------------------------------------------------
+    float scalarL2[L3_SIZE];
+    for (int out = 0; out < L3_SIZE; ++out) {
+        float sum = l2Biases[out];
+        for (int i = 0; i < L2_SIZE * 2; ++i)
+            sum += neonL1[i] * l2Weights[i * L3_SIZE + out];
+        const float c = std::clamp(sum, 0.0f, 1.0f);
+        scalarL2[out] = c * c;
+    }
+
+    float maxL2Diff = 0.0f;
+    int maxL2Index = 0;
+    for (int i = 0; i < L3_SIZE; ++i) {
+        const float diff = std::fabs(neonL2[i] - scalarL2[i]);
+        if (diff > maxL2Diff) {
+            maxL2Diff = diff;
+            maxL2Index = i;
+        }
+    }
+    if (maxL2Diff > 1.0e-5f) {
+        std::cerr << "NNUE VERIFY: forwardL2 mismatch at " << maxL2Index
+                  << " neon=" << neonL2[maxL2Index]
+                  << " scalar=" << scalarL2[maxL2Index]
+                  << " diff=" << maxL2Diff << std::endl;
+        std::abort();
+    }
+
+    // ------------------------------------------------------------
+    // Stage 3: final L3 reduction
+    // ------------------------------------------------------------
+    float scalarL3 = l3Bias;
+    for (int i = 0; i < L3_SIZE; ++i)
+        scalarL3 += scalarL2[i] * l3Weights[i];
+
+    const float l3Diff = std::fabs(neonL3 - scalarL3);
+    if (l3Diff > 1.0e-5f) {
+        std::cerr << "NNUE VERIFY: forwardL3 mismatch"
+                  << " neon=" << neonL3
+                  << " scalar=" << scalarL3
+                  << " diff=" << l3Diff << std::endl;
+        std::abort();
+    }
+
     if (checks == 1)
-        std::cerr << "NNUE VERIFY: activateL1 + forwardL1 passed" << std::endl;
+        std::cerr << "NNUE VERIFY: activateL1 + forwardL1 + forwardL2 + forwardL3 passed" << std::endl;
 }
 
 } // namespace
@@ -310,14 +367,22 @@ int NNUE::inference(Board& board, Accumulator& accumulator) {
     forwardL1(FTOutputs, permutedNet->L1Weights[outputBucket], permutedNet->L1Biases[outputBucket], L1Outputs);
 
 #if defined(TARNISHED_NNUE_STAGE_VERIFY) && !defined(AUTOVEC)
-    const auto& verifyStm = stm == Color::WHITE ? accumulator.white : accumulator.black;
-    const auto& verifyOpp = stm == Color::BLACK ? accumulator.white : accumulator.black;
-    verifyNNUEStages(FTOutputs, L1Outputs, verifyStm, verifyOpp,
-                     permutedNet->L1Weights[outputBucket], permutedNet->L1Biases[outputBucket]);
+    // L1 is checked immediately; L2/L3 are checked after their NEON
+    // calculations so every stage is compared using the same network.
 #endif
 
     forwardL2(L1Outputs, permutedNet->L2Weights[outputBucket], permutedNet->L2Biases[outputBucket], L2Outputs);
     forwardL3(L2Outputs, permutedNet->L3Weights[outputBucket], permutedNet->L3Biases[outputBucket], output);
+
+#if defined(TARNISHED_NNUE_STAGE_VERIFY) && !defined(AUTOVEC)
+    const auto& verifyStm = stm == Color::WHITE ? accumulator.white : accumulator.black;
+    const auto& verifyOpp = stm == Color::BLACK ? accumulator.white : accumulator.black;
+    verifyNNUEStages(FTOutputs, L1Outputs, L2Outputs, output,
+                     verifyStm, verifyOpp,
+                     permutedNet->L1Weights[outputBucket], permutedNet->L1Biases[outputBucket],
+                     permutedNet->L2Weights[outputBucket], permutedNet->L2Biases[outputBucket],
+                     permutedNet->L3Weights[outputBucket], permutedNet->L3Biases[outputBucket]);
+#endif
     return output * NNUE_SCALE;
 }
 
