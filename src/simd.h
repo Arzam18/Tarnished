@@ -17,6 +17,7 @@
     inline vepi16 set1_epi16(int16_t v) { return vreinterpretq_u8_s16(vdupq_n_s16(v)); }
     inline vepi16 load_epi16(const vepi16* p) { return vld1q_u8(reinterpret_cast<const uint8_t*>(p)); }
     inline void store_epi16(vepi16* p, vepi16 v) { vst1q_u8(reinterpret_cast<uint8_t*>(p), v); }
+    inline void store_epi8(vepi8* p, vepi8 v) { vst1q_u8(reinterpret_cast<uint8_t*>(p), v); }
 
     inline vepi16 min_epi16(vepi16 a, vepi16 b) {
         return vreinterpretq_u8_s16(vminq_s16(vreinterpretq_s16_u8(a), vreinterpretq_s16_u8(b)));
@@ -122,6 +123,7 @@ using v128i  = __m128i;
         inline vepi16 set1_epi16(int16_t v){ return _mm512_set1_epi16(v); }
         inline vepi16 load_epi16(const vepi16* p){ return _mm512_load_si512(p); }
         inline void   store_epi16(vepi16* p, vepi16 v){ _mm512_store_si512(p,v); }
+        inline void   store_epi8(vepi8* p, vepi8 v){ _mm512_store_si512(p,v); }
 
         inline vepi16 min_epi16(vepi16 a, vepi16 b){ return _mm512_min_epi16(a,b); }
         inline vepi16 max_epi16(vepi16 a, vepi16 b){ return _mm512_max_epi16(a,b); }
@@ -196,6 +198,7 @@ using v128i  = __m128i;
         inline vepi16 set1_epi16(int16_t v){ return _mm256_set1_epi16(v); }
         inline vepi16 load_epi16(const vepi16* p){ return _mm256_load_si256(p); }
         inline void   store_epi16(vepi16* p, vepi16 v){ _mm256_store_si256(p,v); }
+        inline void   store_epi8(vepi8* p, vepi8 v){ _mm256_store_si256(p,v); }
 
         inline vepi16 min_epi16(vepi16 a, vepi16 b){ return _mm256_min_epi16(a,b); }
         inline vepi16 max_epi16(vepi16 a, vepi16 b){ return _mm256_max_epi16(a,b); }

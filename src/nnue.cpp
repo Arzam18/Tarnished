@@ -3,8 +3,6 @@
 #include "parameters.h"
 
 #include <algorithm>
-#include <cmath>
-#include <cstdlib>
 #include <fstream>
 #include <random>
 
@@ -226,134 +224,6 @@ void NNUE::forwardL3(const float* inputs, const float* weights, const float bias
 #endif
 }
 
-#if defined(TARNISHED_NNUE_STAGE_VERIFY) && !defined(AUTOVEC)
-namespace {
-
-void verifyNNUEStages(const uint8_t* neonFT, const float* neonL1,
-                      const float* neonL2, const float neonL3,
-                      const std::array<int16_t, L1_SIZE>& stm,
-                      const std::array<int16_t, L1_SIZE>& opp,
-                      const int8_t* l1Weights, const float* l1Biases,
-                      const float* l2Weights, const float* l2Biases,
-                      const float* l3Weights, const float l3Bias) {
-    static int checks = 0;
-    if (checks++ >= 32)
-        return;
-
-    // ------------------------------------------------------------
-    // Stage 0: feature transformer activation
-    // ------------------------------------------------------------
-    uint8_t scalarFT[L1_SIZE];
-    for (int i = 0; i < L1_SIZE / 2; ++i) {
-        int16_t c0 = std::clamp<int16_t>(stm[i], 0, QA);
-        int16_t c1 = std::clamp<int16_t>(stm[i + L1_SIZE / 2], 0, QA);
-        scalarFT[i] = static_cast<uint8_t>(c0 * c1 >> FT_SHIFT);
-
-        c0 = std::clamp<int16_t>(opp[i], 0, QA);
-        c1 = std::clamp<int16_t>(opp[i + L1_SIZE / 2], 0, QA);
-        scalarFT[i + L1_SIZE / 2] = static_cast<uint8_t>(c0 * c1 >> FT_SHIFT);
-    }
-
-    for (int i = 0; i < L1_SIZE; ++i) {
-        if (neonFT[i] != scalarFT[i]) {
-            std::cerr << "NNUE VERIFY: activateL1 mismatch at " << i
-                      << " neon=" << int(neonFT[i])
-                      << " scalar=" << int(scalarFT[i]) << std::endl;
-            std::abort();
-        }
-    }
-
-    // ------------------------------------------------------------
-    // Stage 1: NEON packed L1 dot product
-    // Reconstruct the exact packed layout consumed by dpbusd*.
-    // ------------------------------------------------------------
-    int sums[L2_SIZE] = {};
-    constexpr int chunk = 4;
-    for (int group = 0; group < L1_SIZE / chunk; ++group) {
-        const int inputBase = group * chunk;
-        const int weightBase = group * chunk * L2_SIZE;
-        for (int out = 0; out < L2_SIZE; ++out) {
-            int sum = 0;
-            for (int k = 0; k < chunk; ++k)
-                sum += int(scalarFT[inputBase + k]) *
-                       int(l1Weights[weightBase + out * chunk + k]);
-            sums[out] += sum;
-        }
-    }
-
-    float scalarL1[L2_SIZE * 2];
-    for (int i = 0; i < L2_SIZE; ++i) {
-        const float z = float(sums[i]) * L1_MUL + l1Biases[i];
-        scalarL1[i] = std::clamp(z, 0.0f, 1.0f);
-        scalarL1[i + L2_SIZE] = std::clamp(z * z, 0.0f, 1.0f);
-    }
-
-    for (int i = 0; i < L2_SIZE * 2; ++i) {
-        const float diff = std::fabs(neonL1[i] - scalarL1[i]);
-        if (diff > 1.0e-5f) {
-            std::cerr << "NNUE VERIFY: forwardL1 mismatch at " << i
-                      << " neon=" << neonL1[i]
-                      << " scalar=" << scalarL1[i]
-                      << " diff=" << diff << std::endl;
-            std::abort();
-        }
-    }
-
-    // ------------------------------------------------------------
-    // Stage 2: L2 -> L3
-    // This is deliberately scalar and uses the SAME processed network
-    // supplied to the NEON path. It therefore checks arithmetic, not
-    // network generation.
-    // ------------------------------------------------------------
-    float scalarL2[L3_SIZE];
-    for (int out = 0; out < L3_SIZE; ++out) {
-        float sum = l2Biases[out];
-        for (int i = 0; i < L2_SIZE * 2; ++i)
-            sum += neonL1[i] * l2Weights[i * L3_SIZE + out];
-        const float c = std::clamp(sum, 0.0f, 1.0f);
-        scalarL2[out] = c * c;
-    }
-
-    float maxL2Diff = 0.0f;
-    int maxL2Index = 0;
-    for (int i = 0; i < L3_SIZE; ++i) {
-        const float diff = std::fabs(neonL2[i] - scalarL2[i]);
-        if (diff > maxL2Diff) {
-            maxL2Diff = diff;
-            maxL2Index = i;
-        }
-    }
-    if (maxL2Diff > 1.0e-5f) {
-        std::cerr << "NNUE VERIFY: forwardL2 mismatch at " << maxL2Index
-                  << " neon=" << neonL2[maxL2Index]
-                  << " scalar=" << scalarL2[maxL2Index]
-                  << " diff=" << maxL2Diff << std::endl;
-        std::abort();
-    }
-
-    // ------------------------------------------------------------
-    // Stage 3: final L3 reduction
-    // ------------------------------------------------------------
-    float scalarL3 = l3Bias;
-    for (int i = 0; i < L3_SIZE; ++i)
-        scalarL3 += scalarL2[i] * l3Weights[i];
-
-    const float l3Diff = std::fabs(neonL3 - scalarL3);
-    if (l3Diff > 1.0e-5f) {
-        std::cerr << "NNUE VERIFY: forwardL3 mismatch"
-                  << " neon=" << neonL3
-                  << " scalar=" << scalarL3
-                  << " diff=" << l3Diff << std::endl;
-        std::abort();
-    }
-
-    if (checks == 1)
-        std::cerr << "NNUE VERIFY: activateL1 + forwardL1 + forwardL2 + forwardL3 passed" << std::endl;
-}
-
-} // namespace
-#endif
-
 int NNUE::inference(Board& board, Accumulator& accumulator) {
 
     Color stm = board.sideToMove();
@@ -365,24 +235,8 @@ int NNUE::inference(Board& board, Accumulator& accumulator) {
 
     activateL1(accumulator, stm, FTOutputs);
     forwardL1(FTOutputs, permutedNet->L1Weights[outputBucket], permutedNet->L1Biases[outputBucket], L1Outputs);
-
-#if defined(TARNISHED_NNUE_STAGE_VERIFY) && !defined(AUTOVEC)
-    // L1 is checked immediately; L2/L3 are checked after their NEON
-    // calculations so every stage is compared using the same network.
-#endif
-
     forwardL2(L1Outputs, permutedNet->L2Weights[outputBucket], permutedNet->L2Biases[outputBucket], L2Outputs);
     forwardL3(L2Outputs, permutedNet->L3Weights[outputBucket], permutedNet->L3Biases[outputBucket], output);
-
-#if defined(TARNISHED_NNUE_STAGE_VERIFY) && !defined(AUTOVEC)
-    const auto& verifyStm = stm == Color::WHITE ? accumulator.white : accumulator.black;
-    const auto& verifyOpp = stm == Color::BLACK ? accumulator.white : accumulator.black;
-    verifyNNUEStages(FTOutputs, L1Outputs, L2Outputs, output,
-                     verifyStm, verifyOpp,
-                     permutedNet->L1Weights[outputBucket], permutedNet->L1Biases[outputBucket],
-                     permutedNet->L2Weights[outputBucket], permutedNet->L2Biases[outputBucket],
-                     permutedNet->L3Weights[outputBucket], permutedNet->L3Biases[outputBucket]);
-#endif
     return output * NNUE_SCALE;
 }
 
@@ -492,14 +346,76 @@ void Accumulator::refresh(Board& board, Color persp) {
 
 // Refresh with cache
 void Accumulator::refresh(Board& board, Color persp, InputBucketCache& bucketCache) {
-    // NNUE diagnostic: bypass the Finny/input-bucket cache and rebuild the
-    // accumulator directly from the current board position.
-    //
-    // Search.cpp remains completely unchanged. This isolates the cache from
-    // the accumulator/search experiment while preserving incremental updates
-    // between king-bucket refreshes.
-    (void)bucketCache;
-    refresh(board, persp);
+    Square kingSq = board.kingSq(persp);
+
+    auto& accPerspective = persp == Color::WHITE ? white : black;
+
+    needsRefresh[int(persp)] = false;
+    computed[int(persp)] = true;
+
+    BucketCacheEntry& cache = bucketCache.cache[int(persp)][kingSq.file() >= File::FILE_E][kingBucket(kingSq, persp)];
+
+    if (!cache.isInit) {
+        cache.features = std::to_array(permutedNet->FTBiases);
+        cache.isInit = true;
+    }
+
+    accPerspective = cache.features;
+
+    int addIndex = 0;
+    int subIndex = 0;
+    std::array<int, 32> adds = {};
+    std::array<int, 32> subs = {};
+
+    for (Color c : {Color::WHITE, Color::BLACK}) {
+        for (PieceType pt : {PieceType::PAWN, PieceType::KNIGHT, PieceType::BISHOP, 
+                        PieceType::ROOK, PieceType::QUEEN, PieceType::KING}) {
+            Bitboard cachedPieces = cache.cachedPieces[int(pt)] & cache.cachedPieces[int(c) + 6];
+            Bitboard added = board.pieces(pt, c) & ~cachedPieces;
+            Bitboard subbed = ~board.pieces(pt, c) & cachedPieces;
+
+            while (added) {
+                Square sq = added.pop();
+                int feature = NNUE::feature(persp, c, pt, sq, kingSq);
+                adds[addIndex] = feature;
+                addIndex++;
+            }
+
+            while (subbed) {
+                Square sq = subbed.pop();
+                int feature = NNUE::feature(persp, c, pt, sq, kingSq);
+                subs[subIndex] = feature;
+                subIndex++;
+            }
+        }
+    }
+    // add in batches of 4
+    while (addIndex >= 4) {
+        refreshAdd4(accPerspective, adds[addIndex - 1], adds[addIndex - 2], adds[addIndex - 3], adds[addIndex - 4]);
+        addIndex -= 4;
+    }
+    // add remaining individually
+    while (addIndex > 0) {
+        for (int i = 0; i < L1_SIZE; i++) {
+            accPerspective[i] += permutedNet->FTWeights[adds[addIndex - 1] * L1_SIZE + i];
+        }
+        addIndex--;
+    }
+    // sub in batches of 4
+    while (subIndex >= 4) {
+        refreshSub4(accPerspective, subs[subIndex - 1], subs[subIndex - 2], subs[subIndex - 3], subs[subIndex - 4]);
+        subIndex -= 4;
+    }
+    // sub remaining individually
+    while (subIndex > 0) {
+        for (int i = 0; i < L1_SIZE; i++) {
+            accPerspective[i] -= permutedNet->FTWeights[subs[subIndex - 1] * L1_SIZE + i];
+        }
+        subIndex--;
+    }
+
+    cache.set(board, accPerspective);
+    
 }
 
 void Accumulator::refresh(Board& board) {

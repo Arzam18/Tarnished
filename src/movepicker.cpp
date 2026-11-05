@@ -130,4 +130,8 @@ Move MovePicker::nextMove() {
     if (currMove >= movesList.size()) {
         return Move(Move::NO_MOVE);
     }
+
+    // Defensive fallback for an invalid or exhausted stage. Every path must
+    // return a Move; falling off this function is undefined behavior.
+    return Move(Move::NO_MOVE);
 }
