@@ -1,0 +1,52 @@
+name: Build Tarnished for Android ARM64
+
+'on':
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android-arm64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Java 17 for Android SDK tools
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android NDK r27c
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          if [[ ! -d "$ANDROID_HOME/cmdline-tools" ]]; then
+            echo "Android command-line tools not found at $ANDROID_HOME" >&2
+            exit 1
+          fi
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          [[ -x "$SDKMANAGER" ]] || { echo "sdkmanager not found" >&2; exit 1; }
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses < <(yes) >/dev/null
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "ndk;27.2.12479018"
+          echo "NDK_PATH=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+
+      - name: Build NEON and Dotprod binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./build-android-arm64.sh
+          bash ./build-android-arm64.sh
+
+      - name: Upload Android ARM64 binaries and diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tarnished-Android-ARM64
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
