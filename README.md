@@ -124,3 +124,14 @@ You can easily build Tarnished with `make`. NNUE files are stored at [tarnished-
 - [Prelude](https://git.nocturn9x.space/Quinniboi10/Prelude)
 - [Bullet](https://github.com/jw1912/bullet)
 - [weather-factory](https://github.com/jnlt3/weather-factory) Local SPSA tuner for UCI chess engines
+## Android ARM64 builds
+
+This fork includes an Android ARM64 build workflow for both baseline NEON and ARMv8.2-A dot-product targets. The network preprocessing step runs on the x86_64 build host with `TARNISHED_LAYOUT_NEON`, which is essential: the preprocessor must emit the same 128-bit layout consumed by the ARM runtime. Do not run the default `ARCH_LEVEL=native` preprocessing step on an x86 host and then embed that result in an ARM executable.
+
+To build locally, install Android NDK r27c (27.2.12479018), a host C++20 compiler, Python 3, `curl`, and `zip`, then run:
+
+```sh
+NDK_PATH=/path/to/android-ndk-r27c bash ./build-android-arm64.sh
+```
+
+The `workflow_dispatch` GitHub Actions workflow builds both variants and uploads the binaries, disassembly checks, and per-function stack-usage reports. The dot-product build is intended for devices supporting ARMv8.2-A dot product instructions; use the baseline NEON binary on older ARM64 devices.
