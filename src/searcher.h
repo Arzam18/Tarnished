@@ -54,7 +54,7 @@ struct Searcher {
             }
         }
 
-        void startSearching(Board board, Search::Limit limit) {
+        void startSearching(Board board, const Search::Limit& limit) {
             
             {
                 std::unique_lock lockGuard{mutex};

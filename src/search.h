@@ -159,7 +159,7 @@ namespace Search {
             Color color;
             std::optional<std::vector<Move>> search_moves;
 
-            std::array<uint64_t, 4096> nodeCounts;
+            std::array<uint64_t, 4096> nodeCounts{};
 
             Limit() {
                 depth = 0;
@@ -175,6 +175,7 @@ namespace Search {
                 : depth(depth), ctime(ctime), movetime(movetime), color(color) {}
             // I will eventually fix this ugly code
             void start() {
+                nodeCounts.fill(0);
                 enableClock = movetime != 0 || ctime != 0;
                 if (depth == 0)
                     depth = MAX_PLY - 5;
@@ -439,5 +440,5 @@ namespace Search {
             }
     };
 
-    int iterativeDeepening(ThreadInfo& threadInfo, Limit limit);
+    int iterativeDeepening(ThreadInfo& threadInfo, Limit& limit);
 }

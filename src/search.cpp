@@ -786,7 +786,7 @@ namespace Search {
         return bestScore;
     }
 
-    int iterativeDeepening(ThreadInfo& threadInfo, Limit limit) {
+    int iterativeDeepening(ThreadInfo& threadInfo, Limit& limit) {
         bool isMain = threadInfo.type == ThreadType::MAIN;
 
         Stack* ss = &threadInfo.searchStack[6];

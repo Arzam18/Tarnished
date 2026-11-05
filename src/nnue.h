@@ -74,13 +74,19 @@ struct InputBucketCache {
     std::array<std::array<std::array<BucketCacheEntry, INPUT_BUCKETS>, 2>, 2> cache;
 
     InputBucketCache() {
-        for (int persp : {0, 1}) {
-            for (int mirror : {0, 1}) {
-                for (int b = 0; b < INPUT_BUCKETS; b++) {
-                    cache[persp][mirror][b] = BucketCacheEntry();
+        clear();
+    }
+
+    // Invalidate cached positions in place. The first refresh after this reset
+    // must add every piece to the bias accumulator, so clear the cached masks
+    // as well as isInit; otherwise stale masks would suppress/undo features.
+    void clear() {
+        for (auto& perspective : cache)
+            for (auto& mirror : perspective)
+                for (auto& bucket : mirror) {
+                    bucket.isInit = false;
+                    bucket.cachedPieces.fill(Bitboard());
                 }
-            }
-        }
     }
 };
 
@@ -115,13 +121,6 @@ struct Accumulator {
         void refresh(Board& board, Color persp, InputBucketCache& bucketCache);
 
         void applyDelta(Color persp, Accumulator& prev);
-
-        // Diagnostic: rebuild one perspective from the board and compare it
-        // with the current lazy/cache accumulator. This is enabled at runtime
-        // with TARNISHED_NNUE_VERIFY=1 and does not affect normal builds.
-        bool verifyFullRefresh(Board& board, Color persp, int& mismatchIndex,
-                               int16_t& currentValue, int16_t& referenceValue);
-
         void addSubDelta(Color persp, int addF, int subF);
         void addSubSubDelta(Color persp, int addF, int subF1, int subF2);
         void addAddSubSubDelta(Color persp, int addF1, int addF2, int subF1, int subF2);
