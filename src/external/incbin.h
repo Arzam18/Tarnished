@@ -20,6 +20,8 @@
 #elif defined(__AVX__)      || \
       defined(__AVX2__)
 # define INCBIN_ALIGNMENT_INDEX 5
+#elif defined(__aarch64__)
+# define INCBIN_ALIGNMENT_INDEX 6
 #elif defined(__SSE__)      || \
       defined(__SSE2__)     || \
       defined(__SSE3__)     || \
